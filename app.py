@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 import os
 import json
@@ -234,7 +235,6 @@ def build_embedded_viewport(payload):
         <div id="canvas-container"></div>
 
         <script>
-            // Wrap simulation init inside a DOM lifecycle listener to handle hot reloads cleanly
             window.addEventListener('DOMContentLoaded', () => {
                 const data = __PAYLOAD_OBJECT__;
                 const offsets = data.robotOffsets;
@@ -518,45 +518,44 @@ def build_embedded_viewport(payload):
                             }
                         }
 
-                    let blendedTransforms = [];
-                    for(let i=0; i<7; i++) {
-                        let pV1 = new THREE.Vector3().fromArray(currentPoint.transforms[i].pos);
-                        let pV2 = new THREE.Vector3().fromArray(nextPoint.transforms[i].pos);
-                        let blendedPos = new THREE.Vector3().lerpVectors(pV1, pV2, interpolationFraction).toArray();
+                        let blendedTransforms = [];
+                        for(let i=0; i<7; i++) {
+                            let pV1 = new THREE.Vector3().fromArray(currentPoint.transforms[i].pos);
+                            let pV2 = new THREE.Vector3().fromArray(nextPoint.transforms[i].pos);
+                            let blendedPos = new THREE.Vector3().lerpVectors(pV1, pV2, interpolationFraction).toArray();
 
-                        let qV1 = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat);
-                        let qV2 = new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat);
-                        let blendedQuat = qV1.slerp(qV2, interpolationFraction).toArray();
+                            let qV1 = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat);
+                            let qV2 = new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat);
+                            let blendedQuat = qV1.slerp(qV2, interpolationFraction).toArray();
 
-                        blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
+                            blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
+                        }
+                        
+                        let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
+                        updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
+                    } else {
+                        document.getElementById('jog-pendant').style.opacity = "1.0";
+                        document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
                     }
-                    
-                    let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
-                    updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
-                } else {
-                    document.getElementById('jog-pendant').style.opacity = "1.0";
-                    document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
+                    renderer.render(scene, camera);
                 }
-                renderer.render(scene, camera);
-            }
 
-            window.addEventListener('resize', () => {
-                camera.aspect = container.clientWidth / container.clientHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(container.clientWidth, container.clientHeight);
+                window.addEventListener('resize', () => {
+                    camera.aspect = container.clientWidth / container.clientHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(container.clientWidth, container.clientHeight);
+                });
+
+                lastComputedTransforms = computeForwardKinematics(localJointAngles);
+                updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
+                animate();
             });
-
-            lastComputedTransforms = computeForwardKinematics(localJointAngles);
-            updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
-            animate();
-          });
         </script>
     </body>
     </html>
     """.replace("__PAYLOAD_OBJECT__", json_stream)
     
-    b64_html = base64.b64encode(html_source.encode('utf-8')).decode('utf-8')
-    st.iframe(src=f"data:text/html;base64,{b64_html}", height=750, scrolling=False)
+    components.html(html_source, height=750, scrolling=False)
 
 # --- 6. DYNAMIC HARDWARE REBINDING LAYER ---
 active_robot = st.session_state.selected_robot
