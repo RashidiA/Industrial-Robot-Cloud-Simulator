@@ -308,7 +308,7 @@ def build_embedded_viewport(payload):
                     internalJigContent.add(m);
                 }
 
-                // CALIBRATED FORWARD KINEMATICS MATRIX CHAIN TO PREVENT OFFSET EXPLOSIONS
+                // YOUR ORIGINAL WORKING KINEMATICS LOOP ADJUSTED FOR DYNAMIC CONFIG OFFSETS
                 function computeForwardKinematics(angles) {
                     const computedTransforms = [];
                     let currentMatrix = new THREE.Matrix4();
@@ -346,17 +346,17 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 4 (A4) - Corrected translation matrices to maintain nested link bounds
+                    // Link 4 (A4)
                     let m4 = new THREE.Matrix4().makeTranslation(offsets.a4, 0, offsets.d4);
                     m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                     currentMatrix.multiply(m4);
                     
-                    // Track matrix alignment to stop upper wrist displacement
-                    let trackingMatrix = currentMatrix.clone();
-                    let facingVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(trackingMatrix));
+                    let correctionMatrix = currentMatrix.clone();
+                    let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
+                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-offsets.d4));
                     
                     computedTransforms.push({
-                        pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                        pos: fixedPos.toArray(),
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
@@ -546,7 +546,7 @@ def build_embedded_viewport(payload):
     
     components.html(html_source, height=750, scrolling=False)
 
-# --- 5. DYNAMIC DATA ROUTER ---
+# --- 5. DYNAMIC HARDWARE REBINDING LAYER ---
 active_robot = st.session_state.selected_robot
 target_folder = ROBOT_LIBRARY[active_robot]["mesh_folder"]
 
