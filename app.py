@@ -20,111 +20,84 @@ if 'j_angles' not in st.session_state:
 if 'program' not in st.session_state:
     st.session_state.program = []
 
-# --- 2. MASTER CONFIGURATIONS (COORDINATES & ANGLE ADJUSTMENTS) ---
-# Here you can manually adjust values for each link/robot profile specifically.
-# Translations: [X, Y, Z] in meters.
-# Orientations: [Roll, Pitch, Yaw] in radians (e.g., 45 degrees = 45 * np.pi / 180 = 0.7854)
-ROBOT_CONFIGURATIONS = {
+# --- 2. MULTI-ROBOT KINEMATICS REGISTRY ---
+# You can now explicitly adjust both coordinate shifts ("trans") and fixed angles ("orient")
+# "trans": [X, Y, Z] offsets in meters
+# "orient": [Roll, Pitch, Yaw] static angle variations in radians (e.g., 45° = 45 * np.pi / 180 = 0.7854)
+ROBOT_REGISTRY = {
     "ABB_6700": {
-        "a1_trans": [0.0, 0.0, 0.78],
-        "a2_trans": [0.32, 0.0, 0.0],
-        "a3_trans": [0.0, 0.0, 1.28],
-        "a4_trans": [1.142, 0.0, 0.2],
-        "a5_trans": [0.2, 0.0, 0.0],
-        "a6_trans": [0.2, 0.0, 0.0],
-        "orientations": {
-            "a1": [0.0, 0.0, 0.0],
-            "a2": [0.0, 0.0, 0.0],
-            "a3": [0.0, 0.0, 0.0],
-            "a4": [0.0, 0.0, 0.0],  # Modify if link angle is not perpendicular
-            "a5": [0.0, 0.0, 0.0],
-            "a6": [0.0, 0.0, 0.0]
-        },
+        "links": [
+            {"name": "A1", "trans": [0.0, 0.0, 0.78],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.32, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [0.0, 0.0, 1.28],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [1.142, 0.0, 0.2],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.2, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A6", "trans": [0.2, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+        ],
         "fallback_heights": [0.78, 0.5, 1.28, 0.4, 0.2, 0.2, 0.1]
     },
     "ABB_4400": {
-        "a1_trans": [0.0, 0.0, 0.68],
-        "a2_trans": [0.20, 0.0, 0.0],
-        "a3_trans": [0.0, 0.0, 0.88],
-        "a4_trans": [0.85, 0.0, 0.15],
-        "a5_trans": [0.15, 0.0, 0.0],
-        "a6_trans": [0.14, 0.0, 0.0],
-        "orientations": {
-            "a1": [0.0, 0.0, 0.0],
-            "a2": [0.0, 0.0, 0.0],
-            "a3": [0.0, 0.0, 0.0],
-            "a4": [0.0, 0.0, 0.0],
-            "a5": [0.0, 0.0, 0.0],
-            "a6": [0.0, 0.0, 0.0]
-        },
+        "links": [
+            {"name": "A1", "trans": [0.0, 0.0, 0.68],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.20, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [0.0, 0.0, 0.88],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [0.85, 0.0, 0.15],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.15, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A6", "trans": [0.14, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+        ],
         "fallback_heights": [0.68, 0.4, 0.88, 0.3, 0.15, 0.15, 0.08]
     },
     "ABB_6600": {
-        "a1_trans": [0.0, 0.0, 0.715],
-        "a2_trans": [0.30, 0.0, 0.0],
-        "a3_trans": [0.0, 0.0, 1.145],
-        "a4_trans": [1.145, 0.0, 0.20],
-        "a5_trans": [0.20, 0.0, 0.0],
-        "a6_trans": [0.20, 0.0, 0.0],
-        "orientations": {
-            "a1": [0.0, 0.0, 0.0],
-            "a2": [0.0, 0.0, 0.0],
-            "a3": [0.0, 0.0, 0.0],
-            "a4": [0.0, 0.0, 0.0],
-            "a5": [0.0, 0.0, 0.0],
-            "a6": [0.0, 0.0, 0.0]
-        },
+        "links": [
+            {"name": "A1", "trans": [0.0, 0.0, 0.715],  "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.30, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [0.0, 0.0, 1.145],  "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [1.145, 0.0, 0.20], "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.20, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A6", "trans": [0.20, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+        ],
         "fallback_heights": [0.715, 0.45, 1.145, 0.38, 0.2, 0.2, 0.1]
     },
     "KUKA_KR150": {
-        "a1_trans": [0.0, 0.0, 0.75],
-        "a2_trans": [0.35, 0.0, 0.0],
-        "a3_trans": [0.0, 0.0, 1.25],
-        "a4_trans": [1.10, 0.0, 0.05],
-        "a5_trans": [0.23, 0.0, 0.0],
-        "a6_trans": [0.21, 0.0, 0.0],
-        "orientations": {
-            "a1": [0.0, 0.0, 0.0],
-            "a2": [0.0, 0.0, 0.0],
-            "a3": [0.0, 0.0, 0.0],
-            "a4": [0.0, 0.0, 0.0],
-            "a5": [0.0, 0.0, 0.0],
-            "a6": [0.0, 0.0, 0.0]
-        },
+        "links": [
+            {"name": "A1", "trans": [0.0, 0.0, 0.75],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [0.0, 0.0, 1.25],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [1.10, 0.0, 0.05],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.23, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A6", "trans": [0.21, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+        ],
         "fallback_heights": [0.75, 0.5, 1.25, 0.35, 0.23, 0.21, 0.09]
     }
 }
 
-# --- 3. HARDWARE CAPTURE SELECTION INTERFACE ---
+# --- 3. SELECTION INITIALIZATION LAYER ---
 with st.sidebar:
     st.title("📟 Teach Pendant Pro")
     with st.expander("🛠️ Layout Setup", expanded=True):
         selected_profile = st.selectbox(
-            "Select Active Hardware Profile",
-            options=list(ROBOT_CONFIGURATIONS.keys()),
+            "Select Active Hardware Profile", 
+            options=list(ROBOT_REGISTRY.keys()),
             key="robot_profile_selection"
         )
 
-# Extract configurations for the selected profile
-cfg = ROBOT_CONFIGURATIONS[selected_profile]
-o_cfg = cfg["orientations"]
+active_cfg = ROBOT_REGISTRY.get(selected_profile, ROBOT_REGISTRY["ABB_6700"])
 
-# --- 4. DYNAMIC KINEMATICS ENGINE ---
+# --- 4. CONFIGURATION ADJUSTED KINEMATICS ENGINE ---
 @st.cache_resource
-def build_dynamic_chain(profile_name, config_dict):
-    c = config_dict
-    o = c["orientations"]
+def build_robot_chain(profile_name, hardware_config):
+    links_data = hardware_config["links"]
     return Chain(name=profile_name, links=[
         OriginLink(),
-        URDFLink(name="A1", origin_translation=c["a1_trans"], origin_orientation=o["a1"], rotation=[0, 0, 1]),
-        URDFLink(name="A2", origin_translation=c["a2_trans"], origin_orientation=o["a2"], rotation=[0, 1, 0]),
-        URDFLink(name="A3", origin_translation=c["a3_trans"], origin_orientation=o["a3"], rotation=[0, 1, 0]),
-        URDFLink(name="A4", origin_translation=c["a4_trans"], origin_orientation=o["a4"], rotation=[1, 0, 0]),
-        URDFLink(name="A5", origin_translation=c["a5_trans"], origin_orientation=o["a5"], rotation=[0, 1, 0]),
-        URDFLink(name="A6", origin_translation=c["a6_trans"], origin_orientation=o["a6"], rotation=[1, 0, 0]),
+        URDFLink(name=links_data[0]["name"], origin_translation=links_data[0]["trans"], origin_orientation=links_data[0]["orient"], rotation=links_data[0]["rot"]),
+        URDFLink(name=links_data[1]["name"], origin_translation=links_data[1]["trans"], origin_orientation=links_data[1]["orient"], rotation=links_data[1]["rot"]),
+        URDFLink(name=links_data[2]["name"], origin_translation=links_data[2]["trans"], origin_orientation=links_data[2]["orient"], rotation=links_data[2]["rot"]),
+        URDFLink(name=links_data[3]["name"], origin_translation=links_data[3]["trans"], origin_orientation=links_data[3]["orient"], rotation=links_data[3]["rot"]),
+        URDFLink(name=links_data[4]["name"], origin_translation=links_data[4]["trans"], origin_orientation=links_data[4]["orient"], rotation=links_data[4]["rot"]),
+        URDFLink(name=links_data[5]["name"], origin_translation=links_data[5]["trans"], origin_orientation=links_data[5]["orient"], rotation=links_data[5]["rot"]),
     ], active_links_mask=[False, True, True, True, True, True, True])
 
-robot_chain = build_dynamic_chain(selected_profile, cfg)
+robot_chain = build_robot_chain(selected_profile, active_cfg)
 
 def get_link_transforms(angles):
     matrices = robot_chain.forward_kinematics(angles[:7], full_kinematics=True)
@@ -155,11 +128,10 @@ def get_file_hash(filepath):
         return str(os.path.getmtime(filepath))
     return ""
 
-# --- 5. HYBRID PARAMETER EVENT ROUTER ---
+# --- 5. EVENT PARAMETER INTERCEPT LAYER ---
 query_params = st.query_params
 if "event" in query_params:
     event_type = query_params.get("event")
-    
     if event_type == "sync_sequence":
         try:
             raw_program = json.loads(query_params.get("program_data", "[]"))
@@ -167,23 +139,20 @@ if "event" in query_params:
             if len(raw_program) > 0:
                 st.session_state.j_angles = raw_program[-1]["angles"]
         except Exception as e:
-            st.error(f"Pendant data storage sync failure: {e}")
-            
+            st.error(f"Pendant sync failure: {e}")
     elif event_type == "clear_sequence":
         st.session_state.program = []
         st.session_state.j_angles = [0.0] * 8
-        
     st.query_params.clear()
 
-# --- 6. OPERATOR INTERFACE CONTROLS (REST OF SIDEBAR) ---
+# --- 6. OPERATOR INTERFACE CONTROLS ---
 with st.sidebar:
     with st.expander("🛠️ Layout Setup", expanded=False):
         if st.button("🔴 RESET GUN & JIG", use_container_width=True):
             for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
-                if os.path.exists(f): 
+                if os.path.exists(f):
                     try: os.remove(f)
                     except: pass
-            
             st.session_state.program = []
             st.session_state.j_angles = [0.0] * 8
             st.cache_data.clear()      
@@ -219,7 +188,6 @@ with st.sidebar:
         j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
-# Fallback values if sliders weren't built inside the expander initialization
 if 'g_off_x' not in locals(): g_off_x = 0.0
 if 'g_rot_z' not in locals(): g_rot_z = 180
 if 'jx_pos' not in locals(): jx_pos = 1.6
@@ -229,7 +197,7 @@ if 'j_rot_x' not in locals(): j_rot_x = 0
 if 'j_rot_y' not in locals(): j_rot_y = 0
 if 'js_scale' not in locals(): js_scale = 0.001
 
-# --- 7. ENGINE VIRTUAL WEBGL CONTAINER ---
+# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -245,7 +213,6 @@ def build_embedded_viewport(payload):
             body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; }
             #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
             #status { position: absolute; top: 10px; left: 10px; color: #ffffff; font-size: 13px; background: rgba(20,20,20,0.8); padding: 6px 12px; border-radius:4px; border: 1px solid #333; z-index: 10; }
-            
             #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 220px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
             .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
             .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
@@ -253,23 +220,16 @@ def build_embedded_viewport(payload):
             .jog-btn { background: #222; border: 1px solid #444; color: white; width: 45px; height: 26px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; transition: all 0.1s; }
             .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
             .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
-            
             .action-block { margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
             .btn-action { width: 100%; border: none; font-weight: bold; height: 32px; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: background 0.1s; }
-            
             #btn-save-step { background: #ff9800; color: black; }
-            #btn-save-step:hover { background: #ffa726; }
             #btn-run-sim { background: #4caf50; color: white; }
-            #btn-run-sim:hover { background: #66bb6a; }
             #btn-clear-seq { background: #f44336; color: white; }
-            #btn-clear-seq:hover { background: #ef5350; }
-            
             .step-counter { font-size: 12px; font-family: monospace; text-align: center; color: #aaa; margin-top: 2px; }
         </style>
     </head>
     <body>
         <div id="status">WebGL Processing...</div>
-        
         <div id="jog-pendant">
             <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
             <div id="jog-rows-container"></div>
@@ -290,8 +250,7 @@ def build_embedded_viewport(payload):
 
         <script>
             const data = __PAYLOAD_OBJECT__;
-            const c = data.activeConfig; // Dynamic structural offsets configuration registry profile
-            const o = c.orientations;    # Dynamic structural link angular alignment offsets
+            const dh = data.dhConfig; // Reads full list containing .trans and .orient properties
 
             let localJointAngles = [...data.initialAngles];
             let lastComputedTransforms = [];
@@ -350,7 +309,7 @@ def build_embedded_viewport(payload):
                     const material = new THREE.MeshStandardMaterial({ color: linkColors[i], roughness: 0.4 });
                     mesh = new THREE.Mesh(geometry, material);
                 } else {
-                    const h = c.fallback_heights[i];
+                    const h = data.fallbackHeights[i];
                     const geometry = new THREE.CylinderGeometry(0.18, 0.22, h, 24);
                     geometry.rotateX(Math.PI / 2); 
                     if(i === 1 || i === 2 || i === 3) { geometry.translate(0, 0, h / 2); }
@@ -380,25 +339,26 @@ def build_embedded_viewport(payload):
                 internalJigContent.add(m);
             }
 
-            // Helper function to create standard translation matrix * structural fixed angular slant orientation
-            function getJointStructuralBaseMatrix(trans, orient) {
-                let baseMat = new THREE.Matrix4().makeTranslation(trans[0], trans[1], trans[2]);
-                let slantMat = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(orient[0], orient[1], orient[2], 'XYZ'));
-                return baseMat.multiply(slantMat);
+            // Custom local helper function to create standard Translation Matrix * Custom Fixed Orientation Alignment Matrix
+            function getLinkStructureBaseMatrix(linkData) {
+                let mTrans = new THREE.Matrix4().makeTranslation(linkData.trans[0], linkData.trans[1], linkData.trans[2]);
+                let mOrient = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(linkData.orient[0], linkData.orient[1], linkData.orient[2], 'XYZ'));
+                return mTrans.multiply(mOrient);
             }
 
-            // --- PARAMETERIZED MATRIX LOGIC INCLUDING LINK ANGLE AND COORDINATE ADJUSTMENTS ---
+            // --- RECONFIGURED MATRIX ENGINE INTEGRATING COORDINATE SHIFTS AND STATIC ANGLE ADJUSTMENTS ---
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
                 
+                // Base structure link frame initialization
                 computedTransforms.push({
                     pos: new THREE.Vector3(0,0,0).toArray(),
                     quat: new THREE.Quaternion().toArray()
                 });
 
                 // Axis 1
-                let m1 = getJointStructuralBaseMatrix(c.a1_trans, o.a1);
+                let m1 = getLinkStructureBaseMatrix(dh[0]);
                 m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
                 currentMatrix.multiply(m1);
                 computedTransforms.push({
@@ -407,7 +367,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 2
-                let m2 = getJointStructuralBaseMatrix(c.a2_trans, o.a2);
+                let m2 = getLinkStructureBaseMatrix(dh[1]);
                 m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
                 currentMatrix.multiply(m2);
                 computedTransforms.push({
@@ -416,7 +376,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 3
-                let m3 = getJointStructuralBaseMatrix(c.a3_trans, o.a3);
+                let m3 = getLinkStructureBaseMatrix(dh[2]);
                 m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
                 currentMatrix.multiply(m3);
                 computedTransforms.push({
@@ -425,7 +385,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 4
-                let m4 = getJointStructuralBaseMatrix(c.a4_trans, o.a4);
+                let m4 = getLinkStructureBaseMatrix(dh[3]);
                 m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
                 
@@ -439,7 +399,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 5
-                let m5 = getJointStructuralBaseMatrix(c.a5_trans, o.a5);
+                let m5 = getLinkStructureBaseMatrix(dh[4]);
                 m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                 currentMatrix.multiply(m5);
                 computedTransforms.push({
@@ -448,7 +408,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 6
-                let m6 = getJointStructuralBaseMatrix(c.a6_trans, o.a6);
+                let m6 = getLinkStructureBaseMatrix(dh[5]);
                 m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
                 currentMatrix.multiply(m6);
                 computedTransforms.push({
@@ -531,16 +491,12 @@ def build_embedded_viewport(payload):
 
             document.getElementById('btn-save-step').addEventListener('click', () => {
                 if(runSimulation) return;
-                
                 lastComputedTransforms = computeForwardKinematics(localJointAngles);
-                
                 embeddedTrajectory.push({
                     angles: [...localJointAngles],
                     transforms: JSON.parse(JSON.stringify(lastComputedTransforms))
                 });
-                
                 updateUIElements();
-                
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "sync_sequence");
                 targetUrl.searchParams.set("program_data", JSON.stringify(embeddedTrajectory));
@@ -560,7 +516,6 @@ def build_embedded_viewport(payload):
             document.getElementById('btn-clear-seq').addEventListener('click', () => {
                 embeddedTrajectory = [];
                 updateUIElements();
-                
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "clear_sequence");
                 window.parent.location.href = targetUrl.toString();
@@ -584,7 +539,6 @@ def build_embedded_viewport(payload):
                     let computedStepIncrement = (currentPercent / 100) * 0.04;
 
                     interpolationFraction += computedStepIncrement;
-                    
                     if(interpolationFraction >= 1.0) {
                         interpolationFraction = 0;
                         simStepIndex++;
@@ -606,7 +560,6 @@ def build_embedded_viewport(payload):
 
                         blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
                     }
-                    
                     let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
                     updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
                 } else {
@@ -632,21 +585,26 @@ def build_embedded_viewport(payload):
     
     components.html(html_source, height=750, scrolling=False)
 
-# --- 8. EXECUTION ENGINE HARDWARE REBINDING LAYER ---
+# --- 8. DYNAMIC HARDWARE FILE BINDING LAYER ---
 path_gun = os.path.join(TEMP_DIR, "gun.stl")
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
 link_b64s = []
 for i in range(7):
-    # This logic loads the meshes dynamically according to the active folder profile string
-    name = f"link_{i}.stl" if i > 0 else "base_link.stl"
-    link_b64s.append(get_file_base64_cached(os.path.join(BASE_DIR, "assets", "robots", selected_profile, name)))
+    mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
+    target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", selected_profile, mesh_filename)
+    
+    if not os.path.exists(target_mesh_path):
+        target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
+        
+    link_b64s.append(get_file_base64_cached(target_mesh_path))
 
 scene_payload = {
     "trajectory": st.session_state.program,
     "initialAngles": st.session_state.j_angles,
     "linkGeometries": link_b64s,
-    "activeConfig": cfg,  # Pushes active coordinates and orientations arrays to JS environment
+    "fallbackHeights": active_cfg["fallback_heights"],
+    "dhConfig": active_cfg["links"], # Dynamic parameters pushed directly to JS matrix calculations
     "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
     "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
     "gunOffset": g_off_x,
