@@ -1,1 +1,4 @@
-streamlit>=1.30.0
+streamlit>=1.57.0
+numpy>=2.4.6
+scipy>=1.12.0
+ikpy>=3.3.3
