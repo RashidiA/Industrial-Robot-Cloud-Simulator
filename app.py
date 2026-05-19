@@ -6,9 +6,10 @@ import json
 import base64
 from ikpy.chain import Chain
 from ikpy.link import OriginLink, URDFLink
+from scipy.spatial.transform import Rotation as R
 
 # --- 1. SYSTEM INITIALIZATION & HARDWARE REGISTRY ---
-st.set_page_config(page_title="Universal Robot OLP Cloud-Simulator", layout="wide")
+st.set_page_config(page_title="Cloud Pendant Pro-Simulator", layout="wide")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
@@ -90,6 +91,21 @@ def build_robot_chain(robot_key):
         URDFLink(name="A6", origin_translation=[cfg["d6"], 0, 0], origin_orientation=[1, 0, 0], rotation=[1, 0, 0]),
     ], active_links_mask=[False, True, True, True, True, True, True])
 
+def get_link_transforms(angles, robot_key):
+    chain = build_robot_chain(robot_key)
+    matrices = chain.forward_kinematics(angles[:7], full_kinematics=True)
+    transforms = []
+    for i, m in enumerate(matrices):
+        pos_val = m[:3, 3].tolist()
+        if i == 4:
+            m_corr = m.copy()
+            m_corr[:3, 3] += m_corr[:3, 0] * -1.0
+            pos_val = m_corr[:3, 3].tolist()
+        rot_matrix = m[:3, :3]
+        quat = R.from_matrix(rot_matrix).as_quat().tolist()
+        transforms.append({"pos": pos_val, "quat": quat})
+    return transforms
+
 @st.cache_data(show_spinner=False)
 def get_file_base64_cached(filepath, file_hash=""):
     if os.path.exists(filepath):
@@ -124,11 +140,12 @@ if "event" in query_params:
 
 # --- 4. OPERATOR INTERFACE SIDEBAR ---
 with st.sidebar:
-    st.title("📟 Teach Pendant Pro")
+    st.title("📟 Cloud Pendant Pro")
+    st.caption("Edge-Computing Kinematics Engine")
 
-    with st.expander("🛠️ Layout Setup", expanded=True):
+    with st.expander("📁 Hardware Directories Profile", expanded=True):
         selected_profile = st.selectbox(
-            "Select Active Hardware Profile",
+            "Select Robot Library Profile",
             options=list(ROBOT_LIBRARY.keys()),
             index=list(ROBOT_LIBRARY.keys()).index(st.session_state.selected_robot),
             key="robot_profile_selector"
@@ -140,7 +157,7 @@ with st.sidebar:
             st.session_state.j_angles = [0.0] * 8
             st.rerun()
 
-        if st.button("🔴 RESET GUN & JIG", use_container_width=True):
+        if st.button("🔴 WIPE INDUSTRIAL WORKCELL", use_container_width=True):
             for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
                 if os.path.exists(f): 
                     try: os.remove(f)
@@ -152,37 +169,35 @@ with st.sidebar:
             st.query_params.clear()
             st.rerun()
             
-        st.divider()
-        st.write("**🔫 Welding Gun Tooling**")
-        up_gun = st.file_uploader("Upload Gun STL", type=["stl"], key="gun_up")
+    with st.expander("🏗️ Workcell Jig Setup", expanded=False):
+        st.write("**⚙️ Assembly Tooling Integration**")
+        up_gun = st.file_uploader("Upload Tooling Gun STL", type=["stl"], key="gun_up")
         if up_gun:
             with open(os.path.join(TEMP_DIR, "gun.stl"), "wb") as f: 
                 f.write(up_gun.getbuffer())
             st.cache_data.clear()
         
-        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
-        g_rot_z = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
+        g_off_x = st.slider("Gun Offset X (TCP Calibration)", -0.5, 0.5, 0.0, step=0.01)
+        g_rot_z = st.slider("Gun Twist Orientation (Y-Rot)", -180, 180, 180, step=90)
         
         st.divider()
-        st.write("**🏗️ Rotary Positioning Jig**")
-        up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
+        st.write("**🧩 External Positioning Fixture**")
+        up_jig = st.file_uploader("Upload Product Jig STL", type=["stl"], key="jig_up")
         if up_jig:
             with open(os.path.join(TEMP_DIR, "jig.stl"), "wb") as f: 
                 f.write(up_jig.getbuffer())
             st.cache_data.clear()
             
-        jx_pos = st.number_input("Jig Base X Location", value=1.6, step=0.1)
-        jy_pos = st.number_input("Jig Base Y Location", value=0.0, step=0.1)
-        jz_pos = st.number_input("Jig Base Z Elevation Level", value=0.55, step=0.01, format="%.3f")
+        jx_pos = st.number_input("Jig Base Position X", value=1.6, step=0.1)
+        jy_pos = st.number_input("Jig Base Position Y", value=0.0, step=0.1)
+        jz_pos = st.number_input("Jig Base Elevation Z", value=0.55, step=0.01, format="%.3f")
         
-        st.write("**📐 CAD Vector Calibration**")
-        j_rot_x = st.slider("CAD Rotate X Axis", -180, 180, 0, step=90)
-        j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
-        js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
+        st.write("**📐 CAD Vector Alignment**")
+        j_rot_x = st.slider("CAD Correction Rotate X", -180, 180, 0, step=90)
+        j_rot_y = st.slider("CAD Correction Rotate Y", -180, 180, 0, step=90)
+        js_scale = st.number_input("CAD Uniform Scaling Factor", value=0.001, format="%.5f")
 
-current_robot_chain = build_robot_chain(st.session_state.selected_robot)
-
-# --- 5. ENGINE VIRTUAL WEBGL CONTAINER ---
+# --- 5. VIRTUAL WEBGL VIEWPORT ENGINE ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -197,7 +212,7 @@ def build_embedded_viewport(payload):
         <style>
             body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; }
             #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
-            #status { position: absolute; top: 10px; left: 10px; color: #ffffff; font-size: 13px; background: rgba(20,20,20,0.8); padding: 6px 12px; border-radius:4px; border: 1px solid #333; z-index: 10; }
+            #status { position: absolute; top: 10px; left: 10px; color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 12px; background: rgba(20,20,20,0.85); padding: 6px 12px; border-radius:4px; border: 1px solid #ff9800; z-index: 10; letter-spacing: 0.5px; }
             #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 220px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
             .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
             .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
@@ -214,10 +229,10 @@ def build_embedded_viewport(payload):
         </style>
     </head>
     <body>
-        <div id="status">WebGL Processing...</div>
+        <div id="status">CLIENT EDGE KINEMATICS ENGINE: ONLINE</div>
         
         <div id="jog-pendant">
-            <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
+            <div class="pendant-title">⚡ WEBGL CORE DIRECT JOG</div>
             <div id="jog-rows-container"></div>
             <div class="action-block">
                 <div class="jog-row" style="margin-bottom: 4px;">
@@ -226,9 +241,9 @@ def build_embedded_viewport(payload):
                     <div class="val-display" id="val-speed" style="width: 35px; color: #ff9800; font-weight: bold;">50%</div>
                 </div>
                 <button class="btn-action" id="btn-save-step">💾 RECORD STEP POSITION</button>
-                <button class="btn-action" id="btn-run-sim">▶️ RUN SIMULATION</button>
-                <button class="btn-action" id="btn-clear-seq">🗑️ CLEAR SEQUENCE</button>
-                <div class="step-counter" id="lbl-steps">Steps: 0</div>
+                <button class="btn-action" id="btn-run-sim">▶️ RUN INTERPOLATION</button>
+                <button class="btn-action" id="btn-clear-seq">🗑️ WIPE LOCAL SEQUENCE</button>
+                <div class="step-counter" id="lbl-steps">Steps Recorded: 0</div>
             </div>
         </div>
 
@@ -290,6 +305,7 @@ def build_embedded_viewport(payload):
                 const linkColors = [0x222222, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214];
                 const fallbackHeights = [offsets.d1, offsets.a2, offsets.d3, offsets.a4, offsets.d5, offsets.d6, 0.1];
 
+                // Dynamically fixed multi-profile geometric array constructor
                 for(let i=0; i<7; i++) {
                     let mesh;
                     if(data.linkGeometries && data.linkGeometries[i] && data.linkGeometries[i].length > 0) {
@@ -300,7 +316,9 @@ def build_embedded_viewport(payload):
                         const h = fallbackHeights[i] || 0.5;
                         const geometry = new THREE.CylinderGeometry(0.15, 0.18, h, 24);
                         geometry.rotateX(Math.PI / 2); 
-                        if(i === 1 || i === 2 || i === 3) { geometry.translate(0, 0, h / 2); }
+                        if(i === 1 || i === 2 || i === 3) { 
+                            geometry.translate(0, 0, h / 2); 
+                        }
                         mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: linkColors[i], roughness: 0.4 }));
                     }
                     scene.add(mesh);
@@ -327,6 +345,7 @@ def build_embedded_viewport(payload):
                     internalJigContent.add(m);
                 }
 
+                // Fixed absolute mapping engine matrix calculations
                 function computeForwardKinematics(angles) {
                     const computedTransforms = [];
                     let currentMatrix = new THREE.Matrix4();
@@ -410,12 +429,13 @@ def build_embedded_viewport(payload):
                 }
 
                 const rowsContainer = document.getElementById('jog-rows-container');
+                const axisLabels = ["A1", "A2", "A3", "A4", "A5", "A6"];
                 for(let i=1; i<=6; i++) {
                     const row = document.createElement('div');
                     row.className = 'jog-row';
                     row.innerHTML = `
                         <button class="jog-btn" id="btn-m-${i}">-</button>
-                        <div class="jog-label">A${i}</div>
+                        <div class="jog-label">AXIS ${axisLabels[i-1]}</div>
                         <div class="val-display" id="val-${i}">${(localJointAngles[i] * (180 / Math.PI)).toFixed(1)}°</div>
                         <button class="jog-btn" id="btn-p-${i}">+</button>
                     `;
@@ -434,7 +454,7 @@ def build_embedded_viewport(payload):
                 e1Row.style.paddingTop = '8px';
                 e1Row.innerHTML = `
                     <button class="jog-btn" id="btn-m-7">-</button>
-                    <div class="jog-label" style="color:#ff9800;">E1</div>
+                    <div class="jog-label" style="color:#ff9800;">RAIL E1</div>
                     <div class="val-display" id="val-7">${(localJointAngles[7] * (180 / Math.PI)).toFixed(1)}°</div>
                     <button class="jog-btn" id="btn-p-7">+</button>
                 `;
@@ -451,7 +471,7 @@ def build_embedded_viewport(payload):
                 }
 
                 function updateUIElements() {
-                    document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
+                    document.getElementById('lbl-steps').innerText = "Steps Recorded: " + embeddedTrajectory.length;
                 }
                 updateUIElements();
 
@@ -501,7 +521,7 @@ def build_embedded_viewport(payload):
 
                     if (runSimulation && embeddedTrajectory.length >= 2) {
                         document.getElementById('jog-pendant').style.opacity = "0.3"; 
-                        document.getElementById('status').innerText = "Status: Running Sequence Simulation";
+                        document.getElementById('status').innerText = "CLIENT EDGE KINEMATICS ENGINE: RUNNING SEQUENCE INTERPOLATION";
                         let currentPoint = embeddedTrajectory[simStepIndex];
                         let nextPoint = embeddedTrajectory[simStepIndex + 1];
 
@@ -535,7 +555,7 @@ def build_embedded_viewport(payload):
                         updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
                     } else {
                         document.getElementById('jog-pendant').style.opacity = "1.0";
-                        document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
+                        document.getElementById('status').innerText = "CLIENT EDGE KINEMATICS ENGINE: ONLINE";
                     }
                     renderer.render(scene, camera);
                 }
@@ -557,7 +577,7 @@ def build_embedded_viewport(payload):
     
     components.html(html_source, height=750, scrolling=False)
 
-# --- 6. DYNAMIC HARDWARE REBINDING LAYER ---
+# --- 6. EXECUTION ENGINE HARDWARE REBINDING LAYER ---
 active_robot = st.session_state.selected_robot
 target_folder = ROBOT_LIBRARY[active_robot]["mesh_folder"]
 
