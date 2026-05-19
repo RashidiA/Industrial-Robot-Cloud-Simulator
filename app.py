@@ -12,6 +12,7 @@ ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 ROBOTS_DIR = os.path.join(ASSETS_DIR, "robots")
 GUNS_DIR = os.path.join(ASSETS_DIR, "guns")
 
+# Ensure structural directories exist locally
 for d in [ROBOTS_DIR, GUNS_DIR]:
     os.makedirs(d, exist_ok=True)
 
@@ -35,16 +36,14 @@ def get_base64_mesh(filepath):
     return ""
 
 # --- 2. DYNAMIC KINEMATIC DIMENSION PROFILES ---
-# Dictates exact physical offsets to prevent link disconnection during WebGL assembly matrix builds
 ROBOT_DIMENSIONS = {
     "ABB_6700":     {"L0": 0.78,  "L1": 0.32, "L2": 1.28, "L3": 1.142, "L3_Z": 0.2,  "L4": 0.2, "L5": 0.2},
     "ABB_6600":     {"L0": 0.715, "L1": 0.32, "L2": 1.075, "L3": 1.142, "L3_Z": 0.2,  "L4": 0.2, "L5": 0.2},
     "ABB_4400":     {"L0": 0.68,  "L1": 0.15, "L2": 0.88,  "L3": 0.78,  "L3_Z": 0.15, "L4": 0.15, "L5": 0.1},
-    "KUKA_KR150":   {"L0": 0.75,  "L1": 0.35, "L2": 1.25,  "L3": 1.10,  "L3_Z": 0.22, "L4": 0.21, "L5": 0.19},
-    "default":      {"L0": 0.78,  "L1": 0.32, "L2": 1.28,  "L3": 1.142, "L3_Z": 0.2,  "L4": 0.2, "L5": 0.2}
+    "KUKA_KR150":   {"L0": 0.75,  "L1": 0.35, "L2": 1.25,  "L3": 1.10,  "L3_Z": 0.22, "L4": 0.21, "L5": 0.19}
 }
 
-# --- 3. RE-ROUTE STREAM CONTROLLER ---
+# --- 3. STATE SYNC ROUTER ---
 query_params = st.query_params
 if "event" in query_params:
     event_type = query_params.get("event")
@@ -67,7 +66,9 @@ with st.sidebar:
     
     with st.expander("🤖 Hardware Directories Profile", expanded=True):
         robot_options = get_directories_list(ROBOTS_DIR)
-        selected_robot = st.selectbox("Select Robot Library Profile", options=robot_options if robot_options else list(ROBOT_DIMENSIONS.keys())[:-1])
+        # Fallback to dictionary keys if directories are empty on cloud initialization
+        available_robots = robot_options if robot_options else list(ROBOT_DIMENSIONS.keys())
+        selected_robot = st.selectbox("Select Robot Library Profile", options=available_robots)
         
         gun_options = get_directories_list(GUNS_DIR)
         selected_gun = st.selectbox("Select End-Effecter Gun Library", options=gun_options if gun_options else ["None / Custom Tool Profile"])
@@ -85,18 +86,22 @@ with st.sidebar:
         g_off_x = st.slider("Gun Offset Axis (TCP)", -0.5, 0.5, 0.0, step=0.01)
         g_rot_z = st.slider("Gun Tool Orientation Vector Rotation", -180, 180, 180, step=90)
 
-# Extract matching geometric configuration array based on chosen profile
-dimensions_profile = ROBOT_DIMENSIONS.get(selected_robot, ROBOT_DIMENSIONS["default"])
+# Match selected robot configuration dimensions
+dimensions_profile = ROBOT_DIMENSIONS.get(selected_robot, ROBOT_DIMENSIONS["ABB_6700"])
 
+# Collect meshes from filesystem
 robot_geometry_streams = []
-if os.path.exists(os.path.join(ROBOTS_DIR, selected_robot)):
-    target_r_path = os.path.join(ROBOTS_DIR, selected_robot)
-    for i in range(7):
-        mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
+target_r_path = os.path.join(ROBOTS_DIR, selected_robot) if selected_robot in robot_options else ""
+
+for i in range(7):
+    mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
+    if target_r_path and os.path.exists(os.path.join(target_r_path, mesh_filename)):
         robot_geometry_streams.append(get_base64_mesh(os.path.join(target_r_path, mesh_filename)))
+    else:
+        robot_geometry_streams.append("") # Append empty placeholder to trigger WebGL primitive fallback
 
 gun_geometry_stream = ""
-if selected_gun != "None / Custom Tool Profile":
+if selected_gun != "None / Custom Tool Profile" and gun_options:
     gun_geometry_stream = get_base64_mesh(os.path.join(GUNS_DIR, selected_gun, "tool.stl"))
 
 payload_data = {
@@ -134,7 +139,6 @@ def render_cloud_viewport(payload):
             #canvas-viewport { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
             #telemetry-bar { position: absolute; top: 10px; left: 10px; color: #00ffcc; font-size: 11px; font-family: monospace; background: rgba(15,15,15,0.75); padding: 5px 10px; border-radius:4px; border: 1px solid #333; z-index: 10; }
             
-            /* UI COMPACTION MODIFICATIONS: Reduced width, padding, font sizing, and increased transparency */
             #pendant-container { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.75); border: 1px solid #ff9800; border-radius: 5px; width: 175px; padding: 8px; color: white; z-index: 10; box-shadow: 0 6px 15px rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
             .pendant-header { font-size: 9px; font-weight: bold; letter-spacing: 0.5px; color: #ff9800; text-align: center; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 6px; }
             .jog-axis-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
@@ -143,7 +147,7 @@ def render_cloud_viewport(payload):
             .axis-btn:active { background: #ff9800; color: #000; border-color: #ff9800; }
             .axis-readout { font-family: monospace; font-size: 10px; color: #00ffcc; width: 50px; text-align: center; }
             
-            .jig-dropzone { border: 1px dashed #00e5ff; background: rgba(0, 229, 255, 0.03); border-radius: 3px; padding: 4px; font-size: 9px; text-align: center; color: #00e5ff; margin-bottom: 6px; }
+            .jig-dropzone { border: 1px dashed #00e5ff; background: rgba(0, 229, 255, 0.03); border-radius: 3px; padding: 4px; font-size: 9px; text-align: center; color: #00e5ff; margin-bottom: 6px; cursor: pointer; }
             .control-actions { margin-top: 4px; border-top: 1px solid #333; padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
             .btn-core { width: 100%; border: none; font-weight: bold; height: 26px; border-radius: 3px; cursor: pointer; font-size: 10px; display: flex; align-items: center; justify-content: center; }
             #btn-rec { background: #ff9800; color: #000; }
@@ -177,7 +181,7 @@ def render_cloud_viewport(payload):
 
         <script>
             const coreData = __INJECTED_PAYLOAD__;
-            const dims = coreData.dimensions; // Read structural profile dimensions dynamically
+            const dims = coreData.dimensions;
             
             let currentAngles = [...coreData.initialAngles];
             let memoryBuffer = [...coreData.trajectory];
@@ -200,6 +204,7 @@ def render_cloud_viewport(payload):
 
             scene.add(new THREE.AmbientLight(0x666666));
             const sunLight = new THREE.DirectionalLight(0xffffff, 0.8); sunLight.position.set(5, 5, 8); scene.add(sunLight);
+            const backlight = new THREE.DirectionalLight(0xffffff, 0.3); backlight.position.set(-5, -5, 3); scene.add(backlight);
             
             const grid = new THREE.GridHelper(16, 32, 0x444444, 0x222222);
             grid.rotation.x = Math.PI / 2;
@@ -225,6 +230,7 @@ def render_cloud_viewport(payload):
 
             const defaultMaterials = [0x252525, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214];
 
+            // BUILD NESTED KINEMATIC TREE STRUCTURAL CHAINS
             let attachmentParent = scene;
             for(let i=0; i<7; i++) {
                 const jointPivotNode = new THREE.Group();
@@ -240,6 +246,7 @@ def render_cloud_viewport(payload):
                         applyLocalCylinderFallback(i, jointPivotNode);
                     }
                 } else {
+                    // Safety protection triggered if files aren't found or parsed on repository servers
                     applyLocalCylinderFallback(i, jointPivotNode);
                 }
                 attachmentParent = jointPivotNode;
@@ -248,14 +255,28 @@ def render_cloud_viewport(payload):
             kinematicNodes[6].add(assemblyGunGroup);
 
             function applyLocalCylinderFallback(idx, container) {
-                let dLen = dims.L2;
-                if(idx===0) dLen=dims.L0; if(idx===1) dLen=dims.L1; if(idx Sil==4 || idx===5) dLen=dims.L4;
-                const geometry = new THREE.CylinderGeometry(0.12, 0.15, dLen, 16);
+                let dLen = 0.4;
+                if(idx===0) dLen=dims.L0; 
+                if(idx===1) dLen=dims.L1; 
+                if(idx===2) dLen=dims.L2; 
+                if(idx===3) dLen=dims.L3;
+                if(idx===4) dLen=dims.L4; 
+                if(idx===5) dLen=dims.L5;
+
+                const geometry = new THREE.CylinderGeometry(0.08, 0.11, dLen, 16);
+                const fallbackMaterial = new THREE.MeshStandardMaterial({ 
+                    color: defaultMaterials[idx], 
+                    roughness: 0.5,
+                    transparent: true,
+                    opacity: 0.8
+                });
+
                 if (idx === 0) { geometry.rotateX(Math.PI / 2); geometry.translate(0, 0, dLen / 2); }
                 else if (idx === 1) { geometry.rotateY(Math.PI / 2); geometry.translate(dLen / 2, 0, 0); }
                 else if (idx === 2) { geometry.rotateX(Math.PI / 2); geometry.translate(0, 0, dLen / 2); }
                 else { geometry.rotateY(Math.PI / 2); geometry.translate(dLen / 2, 0, 0); }
-                container.add(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: defaultMaterials[idx], roughness: 0.5 })));
+                
+                container.add(new THREE.Mesh(geometry, fallbackMaterial));
             }
 
             if(coreData.gunMesh && coreData.gunMesh.length > 0) {
@@ -267,7 +288,6 @@ def render_cloud_viewport(payload):
                 assemblyGunGroup.add(mesh);
             }
 
-            // DYNAMIC SOLVER LAYER: Replaces the old hardcoded metrics with profile parameters
             function executeMatrixSolver(angles, configTCP) {
                 kinematicNodes[0].position.set(0, 0, 0);
                 kinematicNodes[0].rotation.set(0, 0, 0);
