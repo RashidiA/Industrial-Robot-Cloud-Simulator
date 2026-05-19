@@ -18,7 +18,6 @@ if 'program' not in st.session_state:
     st.session_state.program = []
 
 # --- 2. DYNAMIC KINEMATIC DIMENSION PROFILES ---
-# Contains exact joint offsets used to step the nested local transform matrices
 ROBOT_DIMENSIONS = {
     "ABB_6700":   {"L0": 0.78,  "L1": 0.32, "L2": 1.28,  "L3": 1.142, "L3_Z": 0.2,  "L4": 0.2,  "L5": 0.2},
     "ABB_6600":   {"L0": 0.715, "L1": 0.32, "L2": 1.075, "L3": 1.142, "L3_Z": 0.2,  "L4": 0.2,  "L5": 0.2},
@@ -75,7 +74,6 @@ with st.sidebar:
             st.rerun()
             
         st.divider()
-        # Added Profile Selector
         selected_robot = st.selectbox(
             "Select Robot Library Profile", 
             options=list(ROBOT_DIMENSIONS.keys()), 
@@ -127,38 +125,33 @@ def build_embedded_viewport(payload):
             #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
             #status { position: absolute; top: 10px; left: 10px; color: #ffffff; font-size: 13px; background: rgba(20,20,20,0.8); padding: 6px 12px; border-radius:4px; border: 1px solid #333; z-index: 10; }
             
-            #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 220px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-            .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
-            .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-            .jog-label { font-size: 12px; font-weight: bold; font-family: monospace; color: #bbb; }
-            .jog-btn { background: #222; border: 1px solid #444; color: white; width: 45px; height: 26px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; transition: all 0.1s; }
+            #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 180px; padding: 8px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); backdrop-filter: blur(3px); }
+            .pendant-title { font-size: 10px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
+            .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+            .jog-label { font-size: 11px; font-weight: bold; font-family: monospace; color: #bbb; }
+            .jog-btn { background: #222; border: 1px solid #444; color: white; width: 36px; height: 22px; font-size: 13px; font-weight: bold; cursor: pointer; border-radius: 4px; }
             .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
-            .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
+            .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 55px; text-align: center; }
             
-            .action-block { margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-            .btn-action { width: 100%; border: none; font-weight: bold; height: 32px; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: background 0.1s; }
+            .action-block { margin-top: 8px; border-top: 1px solid #333; padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+            .btn-action { width: 100%; border: none; font-weight: bold; height: 28px; border-radius: 4px; cursor: pointer; font-size: 11px; display: flex; align-items: center; justify-content: center; }
             
             #btn-save-step { background: #ff9800; color: black; }
-            #btn-save-step:hover { background: #ffa726; }
             #btn-run-sim { background: #4caf50; color: white; }
-            #btn-run-sim:hover { background: #66bb6a; }
             #btn-clear-seq { background: #f44336; color: white; }
-            #btn-clear-seq:hover { background: #ef5350; }
-            
-            .step-counter { font-size: 12px; font-family: monospace; text-align: center; color: #aaa; margin-top: 2px; }
+            .step-counter { font-size: 11px; font-family: monospace; text-align: center; color: #aaa; margin-top: 2px; }
         </style>
     </head>
     <body>
         <div id="status">WebGL Processing...</div>
         
         <div id="jog-pendant">
-            <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
+            <div class="pendant-title">⚡ WEBGL DIRECT JOG</div>
             <div id="jog-rows-container"></div>
             <div class="action-block">
                 <div class="jog-row" style="margin-bottom: 4px;">
-                    <div class="jog-label" style="font-size: 11px; color: #aaa;">SPEED</div>
-                    <input type="range" id="sld-speed" min="5" max="100" value="50" step="5" style="flex-grow: 1; margin: 0 10px; accent-color: #ff9800;">
-                    <div class="val-display" id="val-speed" style="width: 35px; color: #ff9800; font-weight: bold;">50%</div>
+                    <input type="range" id="sld-speed" min="5" max="100" value="50" step="5" style="flex-grow: 1; margin: 0 6px; accent-color: #ff9800;">
+                    <div class="val-display" id="val-speed" style="width: 30px; color: #ff9800; font-weight: bold; font-size:10px;">50%</div>
                 </div>
                 <button class="btn-action" id="btn-save-step">💾 RECORD STEP POSITION</button>
                 <button class="btn-action" id="btn-run-sim">▶️ RUN SIMULATION</button>
@@ -181,7 +174,7 @@ def build_embedded_viewport(payload):
             THREE.Object3D.DefaultUp.set(0, 0, 1);
             const container = document.getElementById('canvas-container');
             const scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111111);
+            scene.background = new THREE.Color(0x141414);
 
             const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 100);
             camera.position.set(4.0, -4.0, 3.0);
@@ -202,8 +195,6 @@ def build_embedded_viewport(payload):
             scene.add(grid);
 
             const loader = new THREE.STLLoader();
-            
-            // Core structural joint group arrays for nested tree creation
             const jointPivotNodes = [];
             
             let gunMesh = new THREE.Group();
@@ -223,7 +214,7 @@ def build_embedded_viewport(payload):
 
             const linkColors = [0x222222, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214];
 
-            // BUILD TRUE HIERARCHICAL KINEMATIC STRUCTURAL TREE
+            // BUILD NESTED KINEMATIC TREE CHANNELS
             let attachmentParent = scene;
 
             for(let i=0; i<7; i++) {
@@ -242,10 +233,9 @@ def build_embedded_viewport(payload):
                 } else {
                     applyCylinderFallback(i, pivotGroup);
                 }
-                attachmentParent = pivotGroup; // The next link attaches to this group
+                attachmentParent = pivotGroup;
             }
 
-            // End effector gun mounts directly to the final Link 6 nested frame
             jointPivotNodes[6].add(gunMesh);
 
             function applyCylinderFallback(idx, containerNode) {
@@ -288,36 +278,26 @@ def build_embedded_viewport(payload):
                 internalJigContent.add(m);
             }
 
-            // NESTED TRANSFORM TREE MATRIX ENGINE
             function updateRobotKinematicsTree(angles, gunOffset) {
-                // Link 0 Base
                 jointPivotNodes[0].position.set(0, 0, 0);
-                jointPivotNodes[0].rotation.set(0, 0, angles[1]); // A1 Rotation
+                jointPivotNodes[0].rotation.set(0, 0, angles[1]);
 
-                // Link 1
                 jointPivotNodes[1].position.set(0, 0, dims.L0);
-                jointPivotNodes[1].rotation.set(0, angles[2], 0); // A2 Rotation
+                jointPivotNodes[1].rotation.set(0, angles[2], 0);
 
-                // Link 2
                 jointPivotNodes[2].position.set(dims.L1, 0, 0);
-                jointPivotNodes[2].rotation.set(0, angles[3], 0); // A3 Rotation
+                jointPivotNodes[2].rotation.set(0, angles[3], 0);
 
-                // Link 3
                 jointPivotNodes[3].position.set(0, 0, dims.L2);
-                jointPivotNodes[3].rotation.set(angles[4], 0, 0); // A4 Rotation
+                jointPivotNodes[3].rotation.set(angles[4], 0, 0);
 
-                // Link 4
                 jointPivotNodes[4].position.set(dims.L3, 0, dims.L3_Z);
-                jointPivotNodes[4].rotation.set(0, angles[5], 0); // A5 Rotation
+                jointPivotNodes[4].rotation.set(0, angles[5], 0);
 
-                // Link 5
                 jointPivotNodes[5].position.set(dims.L4, 0, 0);
-                jointPivotNodes[5].rotation.set(angles[6], 0, 0); // A6 Rotation
+                jointPivotNodes[5].rotation.set(angles[6], 0, 0);
 
-                // Link 6 (TCP Flange interface)
                 jointPivotNodes[6].position.set(dims.L5, 0, 0);
-                
-                // Offset the gun along tool coordinate system local axis
                 gunMesh.position.set(gunOffset, 0, 0);
             }
 
@@ -329,7 +309,7 @@ def build_embedded_viewport(payload):
 
             function captureAbsoluteTransformsSnapshot() {
                 const snapshot = [];
-                renderer.render(scene, camera); // Forces internal matrix update
+                renderer.render(scene, camera);
                 for(let i=0; i<7; i++) {
                     const worldPos = new THREE.Vector3();
                     const worldQuat = new THREE.Quaternion();
@@ -359,9 +339,9 @@ def build_embedded_viewport(payload):
             
             const e1Row = document.createElement('div');
             e1Row.className = 'jog-row';
-            e1Row.style.marginTop = '10px';
+            e1Row.style.marginTop = '6px';
             e1Row.style.borderTop = '1px solid #333';
-            e1Row.style.paddingTop = '8px';
+            e1Row.style.paddingTop = '4px';
             e1Row.innerHTML = `
                 <button class="jog-btn" id="btn-m-7">-</button>
                 <div class="jog-label" style="color:#ff9800;">E1</div>
@@ -374,10 +354,8 @@ def build_embedded_viewport(payload):
 
             function jogJoint(jointIdx, direction) {
                 if(runSimulation) return; 
-                
                 localJointAngles[jointIdx] += direction * J_STEP;
                 document.getElementById(`val-${jointIdx}`).innerText = `${(localJointAngles[jointIdx] * (180 / Math.PI)).toFixed(1)}°`;
-                
                 updateSceneTransforms(localJointAngles, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
             }
 
@@ -392,14 +370,11 @@ def build_embedded_viewport(payload):
 
             document.getElementById('btn-save-step').addEventListener('click', () => {
                 if(runSimulation) return;
-                
                 const currentAbsoluteTransforms = captureAbsoluteTransformsSnapshot();
-                
                 embeddedTrajectory.push({
                     angles: [...localJointAngles],
                     transforms: currentAbsoluteTransforms
                 });
-                
                 updateUIElements();
                 
                 const targetUrl = new URL(window.parent.location.href);
@@ -421,7 +396,6 @@ def build_embedded_viewport(payload):
             document.getElementById('btn-clear-seq').addEventListener('click', () => {
                 embeddedTrajectory = [];
                 updateUIElements();
-                
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "clear_sequence");
                 window.parent.location.href = targetUrl.toString();
@@ -445,7 +419,6 @@ def build_embedded_viewport(payload):
                     let computedStepIncrement = (currentPercent / 100) * 0.04;
 
                     interpolationFraction += computedStepIncrement;
-                    
                     if(interpolationFraction >= 1.0) {
                         interpolationFraction = 0;
                         simStepIndex++;
@@ -455,12 +428,10 @@ def build_embedded_viewport(payload):
                         }
                     }
 
-                    // Directly interpolate the joint angles linearly inside the hierarchical matrix tree
                     let intermediateAngles = [];
                     for(let i=0; i<8; i++) {
                         intermediateAngles.push((1 - interpolationFraction) * currentPoint.angles[i] + interpolationFraction * nextPoint.angles[i]);
                     }
-                    
                     updateSceneTransforms(intermediateAngles, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateAngles[7]);
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
@@ -480,7 +451,7 @@ def build_embedded_viewport(payload):
         </script>
     </body>
     </html>
-    \"\"\".replace(\"__PAYLOAD_OBJECT__\", json_stream)
+    """.replace("__PAYLOAD_OBJECT__", json_stream)
     
     components.html(html_source, height=750, scrolling=False)
 
@@ -488,20 +459,16 @@ def build_embedded_viewport(payload):
 path_gun = os.path.join(TEMP_DIR, "gun.stl")
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
-# Dynamically gather the chosen model's dimensions dictionary profile
 chosen_dimensions = ROBOT_DIMENSIONS[selected_robot]
 
 link_b64s = []
 for i in range(7):
-    # Attempts to look up specialized profile directories if you create them later
-    # e.g., assets/meshes/ABB_6600/link_1.stl
     specific_folder_path = os.path.join(BASE_DIR, "assets", "meshes", selected_robot)
     name = f"link_{i}.stl" if i > 0 else "base_link.stl"
     
     if os.path.exists(os.path.join(specific_folder_path, name)):
         target_file = os.path.join(specific_folder_path, name)
     else:
-        # Fallback to the primary mesh directory root
         target_file = os.path.join(BASE_DIR, "assets", "meshes", name)
         
     link_b64s.append(get_file_base64_cached(target_file))
