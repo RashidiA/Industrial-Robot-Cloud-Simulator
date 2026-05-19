@@ -1,12 +1,10 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import numpy as np
 import os
 import json
 import base64
 from ikpy.chain import Chain
 from ikpy.link import OriginLink, URDFLink
-from scipy.spatial.transform import Rotation as R
 
 # --- 1. SYSTEM INITIALIZATION & HARDWARE REGISTRY ---
 st.set_page_config(page_title="Universal Robot OLP Cloud-Simulator", layout="wide")
@@ -15,19 +13,18 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Centralized Profile Registry containing Kinematics offsets and asset directories
 ROBOT_LIBRARY = {
     "ABB_6700": {
         "name": "ABB IRB 6700",
         "mesh_folder": "abb_6700",
         "offsets": {
-            "d1": 0.78,   # Base height to Axis 2
-            "a2": 0.32,   # Axis 2 to Axis 3 X-offset
-            "d3": 1.28,   # Axis 3 length
-            "a4": 1.142,  # Upper arm length X-offset
-            "d4": 0.20,   # Upper arm Z-offset
-            "d5": 0.20,   # Wrist offset 1
-            "d6": 0.20    # Tool flange offset
+            "d1": 0.78,   
+            "a2": 0.32,   
+            "d3": 1.28,   
+            "a4": 1.142,  
+            "d4": 0.20,   
+            "d5": 0.20,   
+            "d6": 0.20    
         }
     },
     "ABB_4400": {
@@ -78,7 +75,7 @@ if 'program' not in st.session_state:
 if 'selected_robot' not in st.session_state:
     st.session_state.selected_robot = "ABB_6700"
 
-# --- 2. DYNAMIC KINEMATICS ENGINE ---
+# --- 2. KINEMATICS ENGINE ---
 @st.cache_resource
 def build_robot_chain(robot_key):
     cfg = ROBOT_LIBRARY[robot_key]["offsets"]
@@ -129,7 +126,6 @@ with st.sidebar:
     st.title("📟 Teach Pendant Pro")
 
     with st.expander("🛠️ Layout Setup", expanded=True):
-        # Interactive Profile Selection Hook
         selected_profile = st.selectbox(
             "Select Active Hardware Profile",
             options=list(ROBOT_LIBRARY.keys()),
@@ -183,7 +179,6 @@ with st.sidebar:
         j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
-# Run background DH validation
 current_robot_chain = build_robot_chain(st.session_state.selected_robot)
 
 # --- 5. ENGINE VIRTUAL WEBGL CONTAINER ---
@@ -240,7 +235,7 @@ def build_embedded_viewport(payload):
 
         <script>
             const data = __PAYLOAD_OBJECT__;
-            const offsets = data.robotOffsets; // Extract active kinematic offsets dynamically
+            const offsets = data.robotOffsets;
 
             let localJointAngles = [...data.initialAngles];
             let lastComputedTransforms = [];
@@ -330,7 +325,6 @@ def build_embedded_viewport(payload):
                 internalJigContent.add(m);
             }
 
-            // --- UNIVERSAL FORWARD KINEMATICS MATRIX RESOLUTION ---
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
@@ -558,7 +552,9 @@ def build_embedded_viewport(payload):
     </html>
     """.replace("__PAYLOAD_OBJECT__", json_stream)
     
-    components.html(html_source, height=750, scrolling=False)
+    # Encodes the generated HTML content safely inside a base64 string layout to bypass st.iframe's direct rendering requirement
+    b64_html = base64.b64encode(html_source.encode('utf-8')).decode('utf-8')
+    st.iframe(src=f"data:text/html;base64,{b64_html}", height=750, scrolling=False)
 
 # --- 6. DYNAMIC HARDWARE REBINDING LAYER ---
 active_robot = st.session_state.selected_robot
@@ -567,7 +563,6 @@ target_folder = ROBOT_LIBRARY[active_robot]["mesh_folder"]
 path_gun = os.path.join(TEMP_DIR, "gun.stl")
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
-# Map files dynamically to sub-folders based on the active model selection
 link_b64s = []
 for i in range(7):
     name = f"link_{i}.stl" if i > 0 else "base_link.stl"
@@ -578,7 +573,7 @@ scene_payload = {
     "trajectory": st.session_state.program,
     "initialAngles": st.session_state.j_angles,
     "linkGeometries": link_b64s,
-    "robotOffsets": ROBOT_LIBRARY[active_robot]["offsets"], # Push dimensions downstream
+    "robotOffsets": ROBOT_LIBRARY[active_robot]["offsets"], 
     "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
     "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
     "gunOffset": g_off_x,
