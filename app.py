@@ -12,7 +12,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Central profile library mapping the kinematic values for each model option
 ROBOT_LIBRARY = {
     "ABB_6700": {
         "name": "ABB IRB 6700",
@@ -309,18 +308,16 @@ def build_embedded_viewport(payload):
                     internalJigContent.add(m);
                 }
 
-                // YOUR EXACT ORIGINAL MATHEMATICAL RENDERING LOGIC FIXED FOR PROFILE VARIABLE LOOKUPS
                 function computeForwardKinematics(angles) {
                     const computedTransforms = [];
                     let currentMatrix = new THREE.Matrix4();
                     
-                    // Base Link (0)
                     computedTransforms.push({
                         pos: new THREE.Vector3(0,0,0).toArray(),
                         quat: new THREE.Quaternion().toArray()
                     });
 
-                    // Link 1 (A1 Axis Rotation)
+                    // Link 1
                     let m1 = new THREE.Matrix4().makeTranslation(0, 0, offsets.d1);
                     m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
                     currentMatrix.multiply(m1);
@@ -329,7 +326,7 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 2 (A2 Axis Rotation)
+                    // Link 2
                     let m2 = new THREE.Matrix4().makeTranslation(offsets.a2, 0, 0);
                     m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
                     currentMatrix.multiply(m2);
@@ -338,7 +335,7 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 3 (A3 Axis Rotation)
+                    // Link 3
                     let m3 = new THREE.Matrix4().makeTranslation(0, 0, offsets.d3);
                     m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
                     currentMatrix.multiply(m3);
@@ -347,15 +344,13 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 4 (A4 Axis Rotation)
+                    // Link 4
                     let m4 = new THREE.Matrix4().makeTranslation(offsets.a4, 0, offsets.d4);
                     m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                     currentMatrix.multiply(m4);
                     
                     let correctionMatrix = currentMatrix.clone();
                     let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
-                    
-                    // FIXED VECTOR OFFSET COMPENSATION: Preserves your exact working scalar stack mapping
                     let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
                     
                     computedTransforms.push({
@@ -363,7 +358,7 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 5 (A5 Axis Rotation)
+                    // Link 5
                     let m5 = new THREE.Matrix4().makeTranslation(offsets.d5, 0, 0);
                     m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                     currentMatrix.multiply(m5);
@@ -372,7 +367,7 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 6 (A6 Axis Rotation)
+                    // Link 6
                     let m6 = new THREE.Matrix4().makeTranslation(offsets.d6, 0, 0);
                     m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
                     currentMatrix.multiply(m6);
