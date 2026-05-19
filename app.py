@@ -5,34 +5,66 @@ import os
 import json
 import base64
 
-# --- 1. SYSTEM INITIALIZATION & HARDWARE REGISTRY ---
+# --- 1. SYSTEM INITIALIZATION & HARDWARE PROFILE REGISTRY ---
 st.set_page_config(page_title="Universal Robot OLP Cloud-Simulator", layout="wide")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Central registry defining structural dimensions for each model profile
+# Central profile library mapping the kinematic values for each model option
 ROBOT_LIBRARY = {
     "ABB_6700": {
         "name": "ABB IRB 6700",
         "mesh_folder": "abb_6700",
-        "offsets": { "d1": 0.78, "a2": 0.32, "d3": 1.28, "a4": 1.142, "d4": 0.20, "d5": 0.20, "d6": 0.20 }
+        "offsets": {
+            "d1": 0.78,   
+            "a2": 0.32,   
+            "d3": 1.28,   
+            "a4": 1.142,  
+            "d4": 0.20,   
+            "d5": 0.20,   
+            "d6": 0.20    
+        }
     },
     "ABB_4400": {
         "name": "ABB IRB 4400",
         "mesh_folder": "abb_4400",
-        "offsets": { "d1": 0.68, "a2": 0.20, "d3": 0.88, "a4": 0.85, "d4": 0.15, "d5": 0.15, "d6": 0.15 }
+        "offsets": {
+            "d1": 0.68,
+            "a2": 0.20,
+            "d3": 0.88,
+            "a4": 0.85,
+            "d4": 0.15,
+            "d5": 0.15,
+            "d6": 0.15
+        }
     },
     "ABB_6600": {
         "name": "ABB IRB 6600",
         "mesh_folder": "abb_6600",
-        "offsets": { "d1": 0.72, "a2": 0.30, "d3": 1.15, "a4": 1.05, "d4": 0.20, "d5": 0.20, "d6": 0.20 }
+        "offsets": {
+            "d1": 0.72,
+            "a2": 0.30,
+            "d3": 1.15,
+            "a4": 1.05,
+            "d4": 0.20,
+            "d5": 0.20,
+            "d6": 0.20
+        }
     },
     "KUKA_KR150": {
         "name": "KUKA KR 150 R2700",
         "mesh_folder": "kuka_kr150",
-        "offsets": { "d1": 0.675, "a2": 0.35, "d3": 1.15, "a4": 1.22, "d4": 0.05, "d5": 0.215, "d6": 0.21 }
+        "offsets": {
+            "d1": 0.675,
+            "a2": 0.35,
+            "d3": 1.15,
+            "a4": 1.22,
+            "d4": 0.05,
+            "d5": 0.215,
+            "d6": 0.21
+        }
     }
 }
 
@@ -248,7 +280,7 @@ def build_embedded_viewport(payload):
                         mesh = new THREE.Mesh(geometry, material);
                     } else {
                         const h = fallbackHeights[i] || 0.5;
-                        const geometry = new THREE.CylinderGeometry(0.15, 0.18, h, 24);
+                        const geometry = new THREE.CylinderGeometry(0.18, 0.22, h, 24);
                         geometry.rotateX(Math.PI / 2); 
                         if(i === 1 || i === 2 || i === 3) { geometry.translate(0, 0, h / 2); }
                         mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: linkColors[i], roughness: 0.4 }));
@@ -277,7 +309,7 @@ def build_embedded_viewport(payload):
                     internalJigContent.add(m);
                 }
 
-                // RESTORED DESIGN PIPELINE FEATURING EXACT GEOMETRIC OFFSETS MATCHED DIRECTLY PER PROFILE
+                // YOUR EXACT ORIGINAL MATHEMATICAL RENDERING LOGIC FIXED FOR PROFILE VARIABLE LOOKUPS
                 function computeForwardKinematics(angles) {
                     const computedTransforms = [];
                     let currentMatrix = new THREE.Matrix4();
@@ -323,9 +355,8 @@ def build_embedded_viewport(payload):
                     let correctionMatrix = currentMatrix.clone();
                     let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
                     
-                    // Compensate base position offset dynamically matching original hardcoded ratio vector
-                    let dynamicScale = (offsets.d4 === 0.2) ? -1.0 : -offsets.d4;
-                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(dynamicScale));
+                    // FIXED VECTOR OFFSET COMPENSATION: Preserves your exact working scalar stack mapping
+                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
                     
                     computedTransforms.push({
                         pos: fixedPos.toArray(),
@@ -518,7 +549,7 @@ def build_embedded_viewport(payload):
     
     components.html(html_source, height=750, scrolling=False)
 
-# --- 5. DYNAMIC HARDWARE REBINDING LAYER ---
+# --- 5. DYNAMIC ASSET HANDLING LAYER ---
 active_robot = st.session_state.selected_robot
 target_folder = ROBOT_LIBRARY[active_robot]["mesh_folder"]
 
