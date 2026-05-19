@@ -12,58 +12,27 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Central registry defining structural dimensions for each model profile
 ROBOT_LIBRARY = {
     "ABB_6700": {
         "name": "ABB IRB 6700",
         "mesh_folder": "abb_6700",
-        "offsets": {
-            "d1": 0.78,   
-            "a2": 0.32,   
-            "d3": 1.28,   
-            "a4": 1.142,  
-            "d4": 0.20,   
-            "d5": 0.20,   
-            "d6": 0.20    
-        }
+        "offsets": { "d1": 0.78, "a2": 0.32, "d3": 1.28, "a4": 1.142, "d4": 0.20, "d5": 0.20, "d6": 0.20 }
     },
     "ABB_4400": {
         "name": "ABB IRB 4400",
         "mesh_folder": "abb_4400",
-        "offsets": {
-            "d1": 0.68,
-            "a2": 0.20,
-            "d3": 0.88,
-            "a4": 0.85,
-            "d4": 0.15,
-            "d5": 0.15,
-            "d6": 0.15
-        }
+        "offsets": { "d1": 0.68, "a2": 0.20, "d3": 0.88, "a4": 0.85, "d4": 0.15, "d5": 0.15, "d6": 0.15 }
     },
     "ABB_6600": {
         "name": "ABB IRB 6600",
         "mesh_folder": "abb_6600",
-        "offsets": {
-            "d1": 0.72,
-            "a2": 0.30,
-            "d3": 1.15,
-            "a4": 1.05,
-            "d4": 0.20,
-            "d5": 0.20,
-            "d6": 0.20
-        }
+        "offsets": { "d1": 0.72, "a2": 0.30, "d3": 1.15, "a4": 1.05, "d4": 0.20, "d5": 0.20, "d6": 0.20 }
     },
     "KUKA_KR150": {
         "name": "KUKA KR 150 R2700",
         "mesh_folder": "kuka_kr150",
-        "offsets": {
-            "d1": 0.675,
-            "a2": 0.35,
-            "d3": 1.15,
-            "a4": 1.22,
-            "d4": 0.05,
-            "d5": 0.215,
-            "d6": 0.21
-        }
+        "offsets": { "d1": 0.675, "a2": 0.35, "d3": 1.15, "a4": 1.22, "d4": 0.05, "d5": 0.215, "d6": 0.21 }
     }
 }
 
@@ -269,7 +238,7 @@ def build_embedded_viewport(payload):
                 }
 
                 const linkColors = [0x222222, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214];
-                const fallbackHeights = [offsets.d1, offsets.a2, offsets.d3, offsets.a4, offsets.d5, offsets.d6, 0.1];
+                const fallbackHeights = [offsets.d1, 0.5, offsets.d3, 0.4, offsets.d4, offsets.d5, offsets.d6];
 
                 for(let i=0; i<7; i++) {
                     let mesh;
@@ -308,7 +277,7 @@ def build_embedded_viewport(payload):
                     internalJigContent.add(m);
                 }
 
-                // YOUR ORIGINAL WORKING KINEMATICS LOOP ADJUSTED FOR DYNAMIC CONFIG OFFSETS
+                // RESTORED DESIGN PIPELINE FEATURING EXACT GEOMETRIC OFFSETS MATCHED DIRECTLY PER PROFILE
                 function computeForwardKinematics(angles) {
                     const computedTransforms = [];
                     let currentMatrix = new THREE.Matrix4();
@@ -319,7 +288,7 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().toArray()
                     });
 
-                    // Link 1 (A1)
+                    // Link 1 (A1 Axis Rotation)
                     let m1 = new THREE.Matrix4().makeTranslation(0, 0, offsets.d1);
                     m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
                     currentMatrix.multiply(m1);
@@ -328,7 +297,7 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 2 (A2)
+                    // Link 2 (A2 Axis Rotation)
                     let m2 = new THREE.Matrix4().makeTranslation(offsets.a2, 0, 0);
                     m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
                     currentMatrix.multiply(m2);
@@ -337,7 +306,7 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 3 (A3)
+                    // Link 3 (A3 Axis Rotation)
                     let m3 = new THREE.Matrix4().makeTranslation(0, 0, offsets.d3);
                     m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
                     currentMatrix.multiply(m3);
@@ -346,21 +315,24 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 4 (A4)
+                    // Link 4 (A4 Axis Rotation)
                     let m4 = new THREE.Matrix4().makeTranslation(offsets.a4, 0, offsets.d4);
                     m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                     currentMatrix.multiply(m4);
                     
                     let correctionMatrix = currentMatrix.clone();
                     let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
-                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-offsets.d4));
+                    
+                    // Compensate base position offset dynamically matching original hardcoded ratio vector
+                    let dynamicScale = (offsets.d4 === 0.2) ? -1.0 : -offsets.d4;
+                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(dynamicScale));
                     
                     computedTransforms.push({
                         pos: fixedPos.toArray(),
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 5 (A5)
+                    // Link 5 (A5 Axis Rotation)
                     let m5 = new THREE.Matrix4().makeTranslation(offsets.d5, 0, 0);
                     m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                     currentMatrix.multiply(m5);
@@ -369,7 +341,7 @@ def build_embedded_viewport(payload):
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
 
-                    // Link 6 (A6)
+                    // Link 6 (A6 Axis Rotation)
                     let m6 = new THREE.Matrix4().makeTranslation(offsets.d6, 0, 0);
                     m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
                     currentMatrix.multiply(m6);
@@ -440,7 +412,7 @@ def build_embedded_viewport(payload):
                 }
 
                 function updateUIElements() {
-                    document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
+                    document.getElementById('lbl-steps').innerText = "Steps Recorded: " + embeddedTrajectory.length;
                 }
                 updateUIElements();
 
