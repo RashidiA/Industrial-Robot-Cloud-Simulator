@@ -6,7 +6,7 @@ import json
 import base64
 
 # --- 1. SYSTEM INITIALIZATION ---
-st.set_page_config(page_title="Multi-Robot OLP Pro-Simulator", layout="wide")
+st.set_page_config(page_title="Cloud Pendant Pro-Simulator", layout="wide")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
@@ -17,7 +17,7 @@ if 'j_angles' not in st.session_state:
 if 'program' not in st.session_state:
     st.session_state.program = []
 
-# --- 2. DYNAMIC KINEMATIC DIMENSION PROFILES ---
+# --- 2. KINEMATIC COEFFICIENT PROFILES ---
 ROBOT_DIMENSIONS = {
     "ABB_6700":   {"L0": 0.78,  "L1": 0.32, "L2": 1.28,  "L3": 1.142, "L3_Z": 0.2,  "L4": 0.2,  "L5": 0.2},
     "ABB_6600":   {"L0": 0.715, "L1": 0.32, "L2": 1.075, "L3": 1.142, "L3_Z": 0.2,  "L4": 0.2,  "L5": 0.2},
@@ -40,7 +40,7 @@ def get_file_hash(filepath):
         return str(os.path.getmtime(filepath))
     return ""
 
-# --- 3. HYBRID EVENT ROUTER ---
+# --- 3. HYBRID PARAMETER ROUTER ---
 query_params = st.query_params
 if "event" in query_params:
     event_type = query_params.get("event")
@@ -57,7 +57,7 @@ if "event" in query_params:
         st.session_state.j_angles = [0.0] * 8
     st.query_params.clear()
 
-# --- 4. OPERATOR INTERFACE SIDEBAR ---
+# --- 4. OPERATOR SIDEBAR INTERFACE ---
 with st.sidebar:
     st.title("📟 Teach Pendant Pro")
 
@@ -167,6 +167,7 @@ def build_embedded_viewport(payload):
             const dims = data.dimensions;
 
             let localJointAngles = [...data.initialAngles];
+            let lastComputedTransforms = [];
             let embeddedTrajectory = [...data.trajectory];
             
             const J_STEP = 5 * (Math.PI / 180);
@@ -195,12 +196,13 @@ def build_embedded_viewport(payload):
             scene.add(grid);
 
             const loader = new THREE.STLLoader();
-            const jointPivotNodes = [];
+            const links = [];
             
             let gunMesh = new THREE.Group();
             let jigMesh = new THREE.Group();
             let internalJigContent = new THREE.Group();
             
+            scene.add(gunMesh);
             jigMesh.add(internalJigContent);
             scene.add(jigMesh);
 
@@ -214,31 +216,25 @@ def build_embedded_viewport(payload):
 
             const linkColors = [0x222222, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214];
 
-            // BUILD NESTED KINEMATIC TREE CHANNELS
-            let attachmentParent = scene;
-
+            // PARSE SOLID MESHES OR COMPUTE THE INDEPENDENT CYLINDRICAL BACKBONE STATIONS
             for(let i=0; i<7; i++) {
-                const pivotGroup = new THREE.Group();
-                attachmentParent.add(pivotGroup);
-                jointPivotNodes.push(pivotGroup);
-
+                let mesh;
                 if(data.linkGeometries && data.linkGeometries[i] && data.linkGeometries[i].length > 0) {
                     try {
                         const geometry = loader.parse(base64ToArrayBuffer(data.linkGeometries[i]));
                         const material = new THREE.MeshStandardMaterial({ color: linkColors[i], roughness: 0.4 });
-                        pivotGroup.add(new THREE.Mesh(geometry, material));
+                        mesh = new THREE.Mesh(geometry, material);
                     } catch(err) {
-                        applyCylinderFallback(i, pivotGroup);
+                        mesh = generateFallbackMesh(i);
                     }
                 } else {
-                    applyCylinderFallback(i, pivotGroup);
+                    mesh = generateFallbackMesh(i);
                 }
-                attachmentParent = pivotGroup;
+                scene.add(mesh);
+                links.push(mesh);
             }
 
-            jointPivotNodes[6].add(gunMesh);
-
-            function applyCylinderFallback(idx, containerNode) {
+            function generateFallbackMesh(idx) {
                 let dLen = 0.4;
                 if(idx===0) dLen = dims.L0; 
                 if(idx===1) dLen = dims.L1; 
@@ -247,15 +243,10 @@ def build_embedded_viewport(payload):
                 if(idx===4) dLen = dims.L4; 
                 if(idx===5) dLen = dims.L5;
 
-                const geometry = new THREE.CylinderGeometry(0.12, 0.16, dLen, 24);
-                const material = new THREE.MeshStandardMaterial({ color: linkColors[idx], roughness: 0.4, transparent: true, opacity: 0.85 });
-                
-                if (idx === 0) { geometry.rotateX(Math.PI / 2); geometry.translate(0, 0, dLen / 2); }
-                else if (idx === 1) { geometry.rotateY(Math.PI / 2); geometry.translate(dLen / 2, 0, 0); }
-                else if (idx === 2) { geometry.rotateX(Math.PI / 2); geometry.translate(0, 0, dLen / 2); }
-                else { geometry.rotateY(Math.PI / 2); geometry.translate(dLen / 2, 0, 0); }
-                
-                containerNode.add(new THREE.Mesh(geometry, material));
+                const geometry = new THREE.CylinderGeometry(0.14, 0.18, dLen, 24);
+                geometry.rotateX(Math.PI / 2); 
+                if(idx === 1 || idx === 2 || idx === 3) { geometry.translate(0, 0, dLen / 2); }
+                return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: linkColors[idx], roughness: 0.4 }));
             }
 
             if(data.gunData && data.gunData.length > 0) {
@@ -278,45 +269,87 @@ def build_embedded_viewport(payload):
                 internalJigContent.add(m);
             }
 
-            function updateRobotKinematicsTree(angles, gunOffset) {
-                jointPivotNodes[0].position.set(0, 0, 0);
-                jointPivotNodes[0].rotation.set(0, 0, angles[1]);
+            // FLAT COORDINATE MATHEMATICAL MATRIX TRANSFORMATIONS
+            function computeForwardKinematics(angles) {
+                const computedTransforms = [];
+                let currentMatrix = new THREE.Matrix4();
+                
+                computedTransforms.push({
+                    pos: new THREE.Vector3(0,0,0).toArray(),
+                    quat: new THREE.Quaternion().toArray()
+                });
 
-                jointPivotNodes[1].position.set(0, 0, dims.L0);
-                jointPivotNodes[1].rotation.set(0, angles[2], 0);
+                let m1 = new THREE.Matrix4().makeTranslation(0, 0, dims.L0);
+                m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
+                currentMatrix.multiply(m1);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
 
-                jointPivotNodes[2].position.set(dims.L1, 0, 0);
-                jointPivotNodes[2].rotation.set(0, angles[3], 0);
+                let m2 = new THREE.Matrix4().makeTranslation(dims.L1, 0, 0);
+                m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
+                currentMatrix.multiply(m2);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
 
-                jointPivotNodes[3].position.set(0, 0, dims.L2);
-                jointPivotNodes[3].rotation.set(angles[4], 0, 0);
+                let m3 = new THREE.Matrix4().makeTranslation(0, 0, dims.L2);
+                m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+                currentMatrix.multiply(m3);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
 
-                jointPivotNodes[4].position.set(dims.L3, 0, dims.L3_Z);
-                jointPivotNodes[4].rotation.set(0, angles[5], 0);
+                let m4 = new THREE.Matrix4().makeTranslation(dims.L3, 0, dims.L3_Z);
+                m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
+                currentMatrix.multiply(m4);
+                
+                let correctionMatrix = currentMatrix.clone();
+                let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
+                let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
+                
+                computedTransforms.push({
+                    pos: fixedPos.toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
 
-                jointPivotNodes[5].position.set(dims.L4, 0, 0);
-                jointPivotNodes[5].rotation.set(angles[6], 0, 0);
+                let m5 = new THREE.Matrix4().makeTranslation(dims.L4, 0, 0);
+                m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
+                currentMatrix.multiply(m5);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
 
-                jointPivotNodes[6].position.set(dims.L5, 0, 0);
-                gunMesh.position.set(gunOffset, 0, 0);
+                let m6 = new THREE.Matrix4().makeTranslation(dims.L5, 0, 0);
+                m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
+                currentMatrix.multiply(m6);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
+
+                return computedTransforms;
             }
 
-            function updateSceneTransforms(angles, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
-                updateRobotKinematicsTree(angles, gunOffset);
+            function updateSceneTransforms(transforms, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
+                for(let i=0; i<7; i++) {
+                    if(links[i] && transforms[i]) {
+                        links[i].position.fromArray(transforms[i].pos);
+                        links[i].quaternion.fromArray(transforms[i].quat);
+                    }
+                }
+                if(links[6]) {
+                    links[6].updateMatrixWorld();
+                    gunMesh.position.copy(links[6].position);
+                    gunMesh.quaternion.copy(links[6].quaternion);
+                    gunMesh.translateX(gunOffset);
+                }
                 jigMesh.position.set(jigX, jigY, jigZ);
                 internalJigContent.rotation.z = e1RotAngle;
-            }
-
-            function captureAbsoluteTransformsSnapshot() {
-                const snapshot = [];
-                renderer.render(scene, camera);
-                for(let i=0; i<7; i++) {
-                    const worldPos = new THREE.Vector3();
-                    const worldQuat = new THREE.Quaternion();
-                    jointPivotNodes[i].matrixWorld.decompose(worldPos, worldQuat, new THREE.Vector3());
-                    snapshot.push({ pos: worldPos.toArray(), quat: worldQuat.toArray() });
-                }
-                return snapshot;
             }
 
             const rowsContainer = document.getElementById('jog-rows-container');
@@ -356,7 +389,8 @@ def build_embedded_viewport(payload):
                 if(runSimulation) return; 
                 localJointAngles[jointIdx] += direction * J_STEP;
                 document.getElementById(`val-${jointIdx}`).innerText = `${(localJointAngles[jointIdx] * (180 / Math.PI)).toFixed(1)}°`;
-                updateSceneTransforms(localJointAngles, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
+                lastComputedTransforms = computeForwardKinematics(localJointAngles);
+                updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
             }
 
             function updateUIElements() {
@@ -370,10 +404,10 @@ def build_embedded_viewport(payload):
 
             document.getElementById('btn-save-step').addEventListener('click', () => {
                 if(runSimulation) return;
-                const currentAbsoluteTransforms = captureAbsoluteTransformsSnapshot();
+                lastComputedTransforms = computeForwardKinematics(localJointAngles);
                 embeddedTrajectory.push({
                     angles: [...localJointAngles],
-                    transforms: currentAbsoluteTransforms
+                    transforms: JSON.parse(JSON.stringify(lastComputedTransforms))
                 });
                 updateUIElements();
                 
@@ -428,11 +462,21 @@ def build_embedded_viewport(payload):
                         }
                     }
 
-                    let intermediateAngles = [];
-                    for(let i=0; i<8; i++) {
-                        intermediateAngles.push((1 - interpolationFraction) * currentPoint.angles[i] + interpolationFraction * nextPoint.angles[i]);
+                    let blendedTransforms = [];
+                    for(let i=0; i<7; i++) {
+                        let pV1 = new THREE.Vector3().fromArray(currentPoint.transforms[i].pos);
+                        let pV2 = new THREE.Vector3().fromArray(nextPoint.transforms[i].pos);
+                        let blendedPos = new THREE.Vector3().lerpVectors(pV1, pV2, interpolationFraction).toArray();
+
+                        let qV1 = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat);
+                        let qV2 = new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat);
+                        let blendedQuat = qV1.slerp(qV2, interpolationFraction).toArray();
+
+                        blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
                     }
-                    updateSceneTransforms(intermediateAngles, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateAngles[7]);
+                    
+                    let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
+                    updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
                     document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
@@ -446,7 +490,8 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            updateSceneTransforms(localJointAngles, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
+            lastComputedTransforms = computeForwardKinematics(localJointAngles);
+            updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
             animate();
         </script>
     </body>
