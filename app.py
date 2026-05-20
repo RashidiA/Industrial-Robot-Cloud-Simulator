@@ -371,7 +371,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().toArray()
                 });
 
-                // Axis 1 (Rot Z)
+                // Axis 1
                 let m1 = getLinkStructureBaseMatrix(dh[0]);
                 m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
                 currentMatrix.multiply(m1);
@@ -380,7 +380,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 2 (Rot Y)
+                // Axis 2
                 let m2 = getLinkStructureBaseMatrix(dh[1]);
                 m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
                 currentMatrix.multiply(m2);
@@ -389,7 +389,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 3 (Rot Y)
+                // Axis 3
                 let m3 = getLinkStructureBaseMatrix(dh[2]);
                 m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
                 currentMatrix.multiply(m3);
@@ -398,7 +398,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 4 (Rot X)
+                // Axis 4
                 let m4 = getLinkStructureBaseMatrix(dh[3]);
                 m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
@@ -407,16 +407,14 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 5 (Rot X with 45 deg Y orientation offset)
+                // Axis 5 (With clean 45-degree rotation offset bound to the Z-axis for Yaskawa_3500)
                 let m5 = getLinkStructureBaseMatrix(dh[4]);
                 if (activeProfileName === "Yaskawa_3500") {
                     let offsetRad = 45 * (Math.PI / 180);
-                    // 1. Tilt matrix forward by 45 degrees on Y axis
-                    m5.multiply(new THREE.Matrix4().makeRotationY(offsetRad));
-                    // 2. Apply Axis 5 rotation directly around local X-axis
+                    // Apply offset rotation around local Z axis instead of Y axis
+                    m5.multiply(new THREE.Matrix4().makeRotationZ(offsetRad));
                     m5.multiply(new THREE.Matrix4().makeRotationX(angles[5]));
-                    // 3. Counter-rotate Y to safely realign Link 6's coordinate frame
-                    m5.multiply(new THREE.Matrix4().makeRotationY(-offsetRad));
+                    m5.multiply(new THREE.Matrix4().makeRotationZ(-offsetRad));
                 } else {
                     m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                 }
@@ -426,7 +424,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 6 (Rot X)
+                // Axis 6
                 let m6 = getLinkStructureBaseMatrix(dh[5]);
                 m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
                 currentMatrix.multiply(m6);
