@@ -57,8 +57,8 @@ ROBOT_REGISTRY = {
     },
     "KUKA_KR150": {
         "links": [
-            {"name": "A1", "trans": [0.0, 0.0, 0.55],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 0, 1]},
-            {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A1", "trans": [0.0, 0.0, 0.55],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [1.3, 0.0, -0.05],  "orient": [0.0, 1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A4", "trans": [2.40, 0.0, 0.1],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
             {"name": "A5", "trans": [-1.0, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
@@ -120,6 +120,10 @@ def get_link_transforms(angles):
     transforms = []
     for i, m in enumerate(matrices):
         pos_val = m[:3, 3].tolist()
+        if i == 4:
+            m_corr = m.copy()
+            m_corr[:3, 3] += m_corr[:3, 0] * -1.0
+            pos_val = m_corr[:3, 3].tolist()
         rot_matrix = m[:3, :3]
         quat = R.from_matrix(rot_matrix).as_quat().tolist()
         transforms.append({"pos": pos_val, "quat": quat})
@@ -352,12 +356,7 @@ def build_embedded_viewport(payload):
                 internalJigContent.add(m);
             }
 
-            function getLinkStructureBaseMatrix(linkData) {
-                let mTrans = new THREE.Matrix4().makeTranslation(linkData.trans[0], linkData.trans[1], linkData.trans[2]);
-                let mOrient = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(linkData.orient[0], linkData.orient[1], linkData.orient[2], 'XYZ'));
-                return mTrans.multiply(mOrient);
-            }
-
+            // --- ORIGINAL WORKING FORWARD KINEMATICS PIPELINE ---
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
@@ -369,7 +368,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 1
-                let m1 = getLinkStructureBaseMatrix(dh[0]);
+                let m1 = new THREE.Matrix4().makeTranslation(dh[0].trans[0], dh[0].trans[1], dh[0].trans[2]);
                 m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
                 currentMatrix.multiply(m1);
                 computedTransforms.push({
@@ -378,7 +377,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 2
-                let m2 = getLinkStructureBaseMatrix(dh[1]);
+                let m2 = new THREE.Matrix4().makeTranslation(dh[1].trans[0], dh[1].trans[1], dh[1].trans[2]);
                 m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
                 currentMatrix.multiply(m2);
                 computedTransforms.push({
@@ -387,7 +386,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 3
-                let m3 = getLinkStructureBaseMatrix(dh[2]);
+                let m3 = new THREE.Matrix4().makeTranslation(dh[2].trans[0], dh[2].trans[1], dh[2].trans[2]);
                 m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
                 currentMatrix.multiply(m3);
                 computedTransforms.push({
@@ -396,7 +395,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 4
-                let m4 = getLinkStructureBaseMatrix(dh[3]);
+                let m4 = new THREE.Matrix4().makeTranslation(dh[3].trans[0], dh[3].trans[1], dh[3].trans[2]);
                 m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
                 computedTransforms.push({
@@ -404,13 +403,12 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 5
-                let m5 = getLinkStructureBaseMatrix(dh[4]);
+                // Axis 5 (Isolates a 45-degree rotation offset directly onto Link 5 Z-axis)
+                let m5 = new THREE.Matrix4().makeTranslation(dh[4].trans[0], dh[4].trans[1], dh[4].trans[2]);
                 if (activeProfileName === "Yaskawa_3500") {
                     let offsetRad = 45 * (Math.PI / 180);
-                    m5.multiply(new THREE.Matrix4().makeRotationZ(offsetRad));
-                    m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
-                    m5.multiply(new THREE.Matrix4().makeRotationZ(-offsetRad));
+                    m5.multiply(new THREE.Matrix4().makeRotationZ(offsetRad)); // Apply +45 deg offset on Z
+                    m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));  // Apply standard Y joint rotation
                 } else {
                     m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                 }
@@ -421,7 +419,7 @@ def build_embedded_viewport(payload):
                 });
 
                 // Axis 6
-                let m6 = getLinkStructureBaseMatrix(dh[5]);
+                let m6 = new THREE.Matrix4().makeTranslation(dh[5].trans[0], dh[5].trans[1], dh[5].trans[2]);
                 m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
                 currentMatrix.multiply(m6);
                 computedTransforms.push({
