@@ -217,6 +217,7 @@ if 'js_scale' not in locals(): js_scale = 0.001
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
+    # We load the web rendering system via single safely encoded components to bypass syntax variations
     html_source = """
     <!DOCTYPE html>
     <html>
@@ -367,4 +368,270 @@ def build_embedded_viewport(payload):
                 let currentMatrix = new THREE.Matrix4();
                 
                 computedTransforms.push({
-                    pos: new
+                    pos: new THREE.Vector3(0,0,0).toArray(),
+                    quat: new THREE.Quaternion().toArray()
+                });
+
+                // Axis 1
+                let m1 = getLinkStructureBaseMatrix(dh[0]);
+                m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
+                currentMatrix.multiply(m1);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
+
+                // Axis 2
+                let m2 = getLinkStructureBaseMatrix(dh[1]);
+                m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
+                currentMatrix.multiply(m2);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
+
+                // Axis 3
+                let m3 = getLinkStructureBaseMatrix(dh[2]);
+                m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+                currentMatrix.multiply(m3);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
+
+                // Axis 4
+                let m4 = getLinkStructureBaseMatrix(dh[3]);
+                m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
+                currentMatrix.multiply(m4);
+                
+                let correctionMatrix = currentMatrix.clone();
+                let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
+                let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
+                
+                computedTransforms.push({
+                    pos: fixedPos.toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
+
+                // Axis 5
+                let m5 = getLinkStructureBaseMatrix(dh[4]);
+                if (activeProfileName === "Yaskawa_3500") {
+                    let offsetRad = 45 * (Math.PI / 180);
+                    m5.multiply(new THREE.Matrix4().makeRotationY(offsetRad));
+                    m5.multiply(new THREE.Matrix4().makeRotationX(angles[5]));
+                    m5.multiply(new THREE.Matrix4().makeRotationY(-offsetRad));
+                } else {
+                    m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
+                }
+                currentMatrix.multiply(m5);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
+
+                // Axis 6
+                let m6 = getLinkStructureBaseMatrix(dh[5]);
+                m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
+                currentMatrix.multiply(m6);
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
+
+                return computedTransforms;
+            }
+
+            function updateSceneTransforms(transforms, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
+                for(let i=0; i<7; i++) {
+                    if(links[i] && transforms[i]) {
+                        links[i].position.fromArray(transforms[i].pos);
+                        links[i].quaternion.fromArray(transforms[i].quat);
+                    }
+                }
+                if(links[6]) {
+                    links[6].updateMatrixWorld();
+                    gunMesh.position.copy(links[6].position);
+                    gunMesh.quaternion.copy(links[6].quaternion);
+                    gunMesh.translateX(gunOffset);
+                }
+                jigMesh.position.set(jigX, jigY, jigZ);
+                internalJigContent.rotation.z = e1RotAngle;
+            }
+
+            const rowsContainer = document.getElementById('jog-rows-container');
+            for(let i=1; i<=6; i++) {
+                const row = document.createElement('div');
+                row.className = 'jog-row';
+                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A${i}</div><div class="val-display" id="val-${i}">0.0°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
+                rowsContainer.appendChild(row);
+                
+                (function(idx) {
+                    document.getElementById(`btn-m-${idx}`).addEventListener('click', () => jogJoint(idx, -1));
+                    document.getElementById(`btn-p-${idx}`).addEventListener('click', () => jogJoint(idx, 1));
+                })(i);
+            }
+            
+            const e1Row = document.createElement('div');
+            e1Row.className = 'jog-row';
+            e1Row.style.marginTop = '10px';
+            e1Row.style.borderTop = '1px solid #333';
+            e1Row.style.paddingTop = '8px';
+            e1Row.innerHTML = `<button class="jog-btn" id="btn-m-7">-</button><div class="jog-label" style="color:#ff9800;">E1</div><div class="val-display" id="val-7">0.0°</div><button class="jog-btn" id="btn-p-7">+</button>`;
+            rowsContainer.appendChild(e1Row);
+            document.getElementById('btn-m-7').addEventListener('click', () => jogJoint(7, -1));
+            document.getElementById('btn-p-7').addEventListener('click', () => jogJoint(7, 1));
+
+            function updateUIJointLabels() {
+                for(let i=1; i<=7; i++) {
+                    document.getElementById(`val-${i}`).innerText = (localJointAngles[i] * (180 / Math.PI)).toFixed(1) + "°";
+                }
+            }
+            updateUIJointLabels();
+
+            function jogJoint(jointIdx, direction) {
+                if(runSimulation) return; 
+                localJointAngles[jointIdx] += direction * J_STEP;
+                updateUIJointLabels();
+                lastComputedTransforms = computeForwardKinematics(localJointAngles);
+                updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
+            }
+
+            function updateUIElements() {
+                document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
+            }
+            updateUIElements();
+
+            document.getElementById('sld-speed').addEventListener('input', (e) => {
+                document.getElementById('val-speed').innerText = e.target.value + "%";
+            });
+
+            document.getElementById('btn-save-step').addEventListener('click', () => {
+                if(runSimulation) return;
+                lastComputedTransforms = computeForwardKinematics(localJointAngles);
+                embeddedTrajectory.push({
+                    angles: [...localJointAngles],
+                    transforms: JSON.parse(JSON.stringify(lastComputedTransforms))
+                });
+                updateUIElements();
+                const targetUrl = new URL(window.parent.location.href);
+                targetUrl.searchParams.set("event", "sync_sequence");
+                targetUrl.searchParams.set("program_data", JSON.stringify(embeddedTrajectory));
+                window.parent.history.replaceState({}, '', targetUrl.toString());
+            });
+
+            document.getElementById('btn-run-sim').addEventListener('click', () => {
+                if(embeddedTrajectory.length < 2) {
+                    alert("Please record at least 2 structural step points to interpolate trajectory paths.");
+                    return;
+                }
+                simStepIndex = 0;
+                interpolationFraction = 0;
+                runSimulation = true;
+            });
+
+            document.getElementById('btn-clear-seq').addEventListener('click', () => {
+                embeddedTrajectory = [];
+                updateUIElements();
+                const targetUrl = new URL(window.parent.location.href);
+                targetUrl.searchParams.set("event", "clear_sequence");
+                window.parent.location.href = targetUrl.toString();
+            });
+
+            let simStepIndex = 0;
+            let interpolationFraction = 0;
+            let runSimulation = false;
+
+            function animate() {
+                requestAnimationFrame(animate);
+                controls.update();
+
+                if (runSimulation && embeddedTrajectory.length >= 2) {
+                    document.getElementById('jog-pendant').style.opacity = "0.3"; 
+                    document.getElementById('status').innerText = "Status: Running Sequence Simulation";
+                    let currentPoint = embeddedTrajectory[simStepIndex];
+                    let nextPoint = embeddedTrajectory[simStepIndex + 1];
+
+                    let currentPercent = parseFloat(document.getElementById('sld-speed').value);
+                    let computedStepIncrement = (currentPercent / 100) * 0.04;
+
+                    interpolationFraction += computedStepIncrement;
+                    if(interpolationFraction >= 1.0) {
+                        interpolationFraction = 0;
+                        simStepIndex++;
+                        if (simStepIndex >= embeddedTrajectory.length - 1) {
+                            runSimulation = false;
+                            simStepIndex = 0;
+                        }
+                    }
+
+                    let blendedTransforms = [];
+                    for(let i=0; i<7; i++) {
+                        let pV1 = new THREE.Vector3().fromArray(currentPoint.transforms[i].pos);
+                        let pV2 = new THREE.Vector3().fromArray(nextPoint.transforms[i].pos);
+                        let blendedPos = new THREE.Vector3().lerpVectors(pV1, pV2, interpolationFraction).toArray();
+
+                        let qV1 = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat);
+                        let qV2 = new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat);
+                        let blendedQuat = qV1.slerp(qV2, interpolationFraction).toArray();
+
+                        blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
+                    }
+                    let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
+                    updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
+                } else {
+                    document.getElementById('jog-pendant').style.opacity = "1.0";
+                    document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
+                }
+                renderer.render(scene, camera);
+            }
+
+            window.addEventListener('resize', () => {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            });
+
+            lastComputedTransforms = computeForwardKinematics(localJointAngles);
+            updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
+            animate();
+        </script>
+    </body>
+    </html>
+    """.replace("__PAYLOAD_OBJECT__", json_stream)
+    
+    components.html(html_source, height=750, scrolling=False)
+
+# --- 8. DYNAMIC HARDWARE FILE BINDING LAYER ---
+path_gun = os.path.join(TEMP_DIR, "gun.stl")
+path_jig = os.path.join(TEMP_DIR, "jig.stl")
+
+link_b64s = []
+for i in range(7):
+    mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
+    target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", selected_profile, mesh_filename)
+    
+    if not os.path.exists(target_mesh_path):
+        target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
+        
+    link_b64s.append(get_file_base64_cached(target_mesh_path))
+
+scene_payload = {
+    "profileName": selected_profile,
+    "trajectory": st.session_state.program,
+    "initialAngles": st.session_state.j_angles,
+    "linkGeometries": link_b64s,
+    "fallbackHeights": active_cfg["fallback_heights"],
+    "dhConfig": active_cfg["links"],
+    "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
+    "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
+    "gunOffset": g_off_x,
+    "gunRotZ": float(g_rot_z) * (np.pi / 180.0),
+    "jigX": jx_pos,
+    "jigY": jy_pos,
+    "jigZ": jz_pos,
+    "rotX": float(j_rot_x) * (np.pi / 180.0),
+    "rotY": float(j_rot_y) * (np.pi / 180.0),
+    "jigScale": js_scale
+}
+
+build_embedded_viewport(scene_payload)
