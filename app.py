@@ -21,7 +21,6 @@ if 'program' not in st.session_state:
     st.session_state.program = []
 
 # --- 2. MULTI-ROBOT KINEMATICS REGISTRY ---
-# Key updated to match folder name "Yaskawa_3500" for seamless directory binding
 ROBOT_REGISTRY = {
     "ABB_6700": {
         "links": [
@@ -69,12 +68,13 @@ ROBOT_REGISTRY = {
     },
     "Yaskawa_3500": {
         "links": [
-            {"name": "A1", "trans": [-0.15, 0.0, 0.70],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
-            {"name": "A2", "trans": [0.0, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A3", "trans": [0.0, 0.0, 1.3],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [2.4, 0.0, 0.0],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A1", "trans": [-0.15, 0.0, 0.70], "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.0, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [0.0, 0.0, 1.3],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [2.4, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            # Note: link structure remains uniform, custom matrix rotations handled dynamically in WebGL viewport
             {"name": "A5", "trans": [-1.0, 0.0, 0.0],   "orient": [0.0, 1.0708, 0.0], "rot": [0, 1, 0]},
-            {"name": "A6", "trans": [0.09, 0.0, -0.03],   "orient": [0.0, -1.0708, 0.0], "rot": [1, 0, 0]},
+            {"name": "A6", "trans": [0.09, 0.0, -0.03], "orient": [0.0, -1.0708, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.70, 0.45, 1.15, 0.35, 0.18, 0.18, 0.10]
     }
@@ -268,6 +268,7 @@ def build_embedded_viewport(payload):
         <script>
             const data = __PAYLOAD_OBJECT__;
             const dh = data.dhConfig;
+            const activeProfileName = data.profileName;
 
             let localJointAngles = [...data.initialAngles];
             let lastComputedTransforms = [];
@@ -414,7 +415,16 @@ def build_embedded_viewport(payload):
 
                 // Axis 5
                 let m5 = getLinkStructureBaseMatrix(dh[4]);
-                m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
+                if (activeProfileName === "Yaskawa_3500") {
+                    // Apply 45-degree rotation offset on Y-axis to angle link 5, rotate on Z-axis, then reverse orientation offset
+                    let offsetRad = 45 * (Math.PI / 180);
+                    m5.multiply(new THREE.Matrix4().makeRotationY(offsetRad));
+                    m5.multiply(new THREE.Matrix4().makeRotationZ(angles[5]));
+                    m5.multiply(new THREE.Matrix4().makeRotationY(-offsetRad));
+                } else {
+                    // Default configuration: Rotate around Y-axis
+                    m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
+                }
                 currentMatrix.multiply(m5);
                 computedTransforms.push({
                     pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
@@ -614,6 +624,7 @@ for i in range(7):
     link_b64s.append(get_file_base64_cached(target_mesh_path))
 
 scene_payload = {
+    "profileName": selected_profile,
     "trajectory": st.session_state.program,
     "initialAngles": st.session_state.j_angles,
     "linkGeometries": link_b64s,
