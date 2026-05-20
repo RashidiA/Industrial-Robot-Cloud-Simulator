@@ -331,10 +331,12 @@ def build_embedded_viewport(payload):
                 internalJigContent.add(m);
             }
 
-            // --- ORIGINAL WORKING STABLE MATRIX PIPE ---
+            // --- ORIGINAL STABLE MATRICES PIPE FOR ALL PROFILES ---
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
+                
+                // Base Link (Link 0) position and orientation
                 computedTransforms.push({
                     pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
@@ -348,7 +350,7 @@ def build_embedded_viewport(payload):
                     if(d.rot[1]===1) m.multiply(new THREE.Matrix4().makeRotationY(angles[i+1]));
                     if(d.rot[0]===1) m.multiply(new THREE.Matrix4().makeRotationX(angles[i+1]));
                     
-                    // Injection Point: ONLY apply offset to Link 5 local coordinate system for Yaskawa
+                    // Controlled injection: Apply the 45-deg rotation offset precisely around local Z *after* applying joint angle variations
                     if(i === 4 && data.profileName === "Yaskawa_3500") {
                         let offsetRad = 45 * (Math.PI / 180);
                         m.multiply(new THREE.Matrix4().makeRotationZ(offsetRad));
