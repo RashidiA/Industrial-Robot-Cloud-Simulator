@@ -21,12 +21,13 @@ if 'program' not in st.session_state:
     st.session_state.program = []
 
 # --- 2. MULTI-ROBOT KINEMATICS REGISTRY ---
+# Key updated to match folder name "Yaskawa_3500" for seamless directory binding
 ROBOT_REGISTRY = {
     "ABB_6700": {
         "links": [
             {"name": "A1", "trans": [0.0, 0.0, 0.78],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
             {"name": "A2", "trans": [0.32, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A3", "trans": [0.0, 0.0, 1.28],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [0.0, 0.0, 1.1],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A4", "trans": [1.142, 0.0, 0.2],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
             {"name": "A5", "trans": [0.2, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A6", "trans": [0.2, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
@@ -35,57 +36,65 @@ ROBOT_REGISTRY = {
     },
     "ABB_4400": {
         "links": [
-            {"name": "A1", "trans": [0.0, 0.0, 0.68],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
-            {"name": "A2", "trans": [0.20, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A1", "trans": [0.0, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.20, 0.0, 0.6],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [0.0, 0.0, 0.88],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [0.85, 0.0, 0.15],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [0.15, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A6", "trans": [0.14, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A4", "trans": [2.15, 0.0, 0.15],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [-1.0, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A6", "trans": [0.14, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.68, 0.4, 0.88, 0.3, 0.15, 0.15, 0.08]
     },
     "ABB_6600": {
         "links": [
-            {"name": "A1", "trans": [0.0, 0.0, 0.715],  "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
-            {"name": "A2", "trans": [0.30, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A3", "trans": [0.0, 0.0, 1.145],  "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [1.145, 0.0, 0.20], "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [0.20, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A6", "trans": [0.20, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A1", "trans": [0.0, 0.0, 0.22],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.30, 0.0, 0.5],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [0.0, -0.2, 1.145], "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [1.145, 0.2, 0.20], "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.65, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A6", "trans": [0.18, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.715, 0.45, 1.145, 0.38, 0.2, 0.2, 0.1]
     },
     "KUKA_KR150": {
         "links": [
-            {"name": "A1", "trans": [0.0, 0.0, 0.75],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
-            {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A3", "trans": [0.0, 0.0, 1.25],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [1.10, 0.0, 0.05],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [0.23, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A6", "trans": [0.21, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A1", "trans": [0.0, 0.0, 0.55],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [1.3, 0.0, -0.05],  "orient": [0.0, 1.5708, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [2.40, 0.0, 0.1],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [-1.0, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A6", "trans": [0.21, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.75, 0.5, 1.25, 0.35, 0.23, 0.21, 0.09]
     },
-    "Yaskawa": {
+    "Yaskawa_3500": {
         "links": [
             {"name": "A1", "trans": [0.0, 0.0, 0.70],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
             {"name": "A2", "trans": [0.30, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [0.0, 0.0, 1.15],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A4", "trans": [1.10, 0.0, 0.15],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [0.18, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A6", "trans": [0.18, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.18, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A6", "trans": [0.18, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.70, 0.45, 1.15, 0.35, 0.18, 0.18, 0.10]
     }
 }
 
-# --- 3. SELECTION INITIALIZATION LAYER ---
+# --- 3. SELECTION INITIALIZATION LAYER (DYNAMIC DIRECTORY SCAN) ---
 with st.sidebar:
     st.title("📟 Teach Pendant Pro")
     with st.expander("🛠️ Layout Setup", expanded=True):
+        robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
+        available_profiles = list(ROBOT_REGISTRY.keys())
+        
+        if os.path.exists(robot_folder_path):
+            scanned_folders = [f for f in os.listdir(robot_folder_path) if os.path.isdir(os.path.join(robot_folder_path, f))]
+            if scanned_folders:
+                available_profiles = sorted(list(set(scanned_folders + available_profiles)))
+
         selected_profile = st.selectbox(
             "Select Active Hardware Profile", 
-            options=list(ROBOT_REGISTRY.keys()),
+            options=available_profiles,
             key="robot_profile_selection"
         )
 
