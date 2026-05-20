@@ -159,10 +159,6 @@ def get_link_transforms(angles):
     transforms = []
     for i, m in enumerate(matrices):
         pos_val = m[:3, 3].tolist()
-        if i == 4:
-            m_corr = m.copy()
-            m_corr[:3, 3] += m_corr[:3, 0] * -1.0
-            pos_val = m_corr[:3, 3].tolist()
         rot_matrix = m[:3, :3]
         quat = R.from_matrix(rot_matrix).as_quat().tolist()
         transforms.append({"pos": pos_val, "quat": quat})
@@ -331,12 +327,11 @@ def build_embedded_viewport(payload):
                 internalJigContent.add(m);
             }
 
-            // --- ORIGINAL STABLE MATRICES PIPE FOR ALL PROFILES ---
+            // --- PURE ORIGINAL FOR-LOOP KINEMATICS MATRIX MATHEMATICS PIPE ---
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
                 
-                // Base Link (Link 0) position and orientation
                 computedTransforms.push({
                     pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
@@ -350,7 +345,7 @@ def build_embedded_viewport(payload):
                     if(d.rot[1]===1) m.multiply(new THREE.Matrix4().makeRotationY(angles[i+1]));
                     if(d.rot[0]===1) m.multiply(new THREE.Matrix4().makeRotationX(angles[i+1]));
                     
-                    // Controlled injection: Apply the 45-deg rotation offset precisely around local Z *after* applying joint angle variations
+                    // Controlled injection: Apply the 45-deg rotation offset precisely around local Z inside Link 5 context for Yaskawa
                     if(i === 4 && data.profileName === "Yaskawa_3500") {
                         let offsetRad = 45 * (Math.PI / 180);
                         m.multiply(new THREE.Matrix4().makeRotationZ(offsetRad));
@@ -359,10 +354,6 @@ def build_embedded_viewport(payload):
                     currentMatrix.multiply(m);
                     
                     let pos = new THREE.Vector3().setFromMatrixPosition(currentMatrix);
-                    if(i === 3) {
-                        let dir = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(currentMatrix));
-                        pos.add(dir.multiplyScalar(-1.0));
-                    }
                     computedTransforms.push({
                         pos: pos.toArray(),
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
