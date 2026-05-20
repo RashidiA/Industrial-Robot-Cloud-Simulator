@@ -331,25 +331,28 @@ def build_embedded_viewport(payload):
                 internalJigContent.add(m);
             }
 
-            // --- PROTECTED MATRIX MULTIPLICATION PIPELINE ---
+            // --- ORIGINAL WORKING STABLE MATRIX PIPE ---
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
-                computedTransforms.push({ pos: [0,0,0], quat: [0,0,0,1] });
+                computedTransforms.push({
+                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                });
 
                 for(let i=0; i<6; i++) {
                     let d = data.dhConfig[i];
                     let m = new THREE.Matrix4().makeTranslation(d.trans[0], d.trans[1], d.trans[2]);
                     
-                    // SAFE INJECTION: Apply 45 deg Z-offset only at Axis 5 (i === 4) for Yaskawa_3500 profile
+                    if(d.rot[2]===1) m.multiply(new THREE.Matrix4().makeRotationZ(angles[i+1]));
+                    if(d.rot[1]===1) m.multiply(new THREE.Matrix4().makeRotationY(angles[i+1]));
+                    if(d.rot[0]===1) m.multiply(new THREE.Matrix4().makeRotationX(angles[i+1]));
+                    
+                    // Injection Point: ONLY apply offset to Link 5 local coordinate system for Yaskawa
                     if(i === 4 && data.profileName === "Yaskawa_3500") {
                         let offsetRad = 45 * (Math.PI / 180);
                         m.multiply(new THREE.Matrix4().makeRotationZ(offsetRad));
                     }
-
-                    if(d.rot[2]===1) m.multiply(new THREE.Matrix4().makeRotationZ(angles[i+1]));
-                    if(d.rot[1]===1) m.multiply(new THREE.Matrix4().makeRotationY(angles[i+1]));
-                    if(d.rot[0]===1) m.multiply(new THREE.Matrix4().makeRotationX(angles[i+1]));
                     
                     currentMatrix.multiply(m);
                     
