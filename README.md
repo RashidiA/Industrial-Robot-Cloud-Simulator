@@ -1,5 +1,3 @@
-
-
 # Multi-Robot OLP Pro-Simulator 🤖⚡
 
 An interactive, web-based Offline Programming (OLP) robotic simulator built with **Streamlit** and **Three.js (WebGL)**. This application provides real-time forward kinematics calculation, an intuitive virtual jog pendant, welding gun tooling offset adjustments, and rotatable fixture positioner configuration—all within a single responsive, wide-screen interface.
@@ -12,7 +10,9 @@ Watch the simulation workflow in real-time, showcasing multi-robot profile loadi
 
 <g-emoji class="g-emoji" alias="arrow_forward" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/25b6.png">▶️</g-emoji> **Click to preview execution setup below:**
 
-https://github.com/user-attachments/assets/YOUR_UPLOADED_VIDEO_GUID_HERE
+https://github.com/user-attachments/assets/YOUR_UPLOADED_VIDE
+
+O_GUID_HERE
 
 > 💡 **Tip:** To embed your own recording on GitHub, simply edit this `README.md` on the GitHub website and **drag-and-drop** your `.mp4` or `.mov` file directly into the markdown code window. GitHub will host it securely and generate the play link automatically!
 
