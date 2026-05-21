@@ -71,35 +71,34 @@ ROBOT_REGISTRY = {
             {"name": "A1", "trans": [0.0, 0.0, 0.50],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
             {"name": "A2", "trans": [0.16, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [0.0, 0.0, 0.9],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [0.0, 0.0, 0.21],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [1.0, 0.0, 0.0],    "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [1.0, 0.0, 0.2],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.0, 0.0, 0.0],    "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A6", "trans": [0.0, 0.0, -0.17],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.70, 0.45, 1.15, 0.35, 0.18, 0.18, 0.10]
     }
 }
 
-# --- 3. SELECTION INITIALIZATION LAYER ---
-with st.sidebar:
-    st.title("📟 Teach Pendant Pro")
-    with st.expander("🛠️ Layout Setup", expanded=True):
-        robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
-        available_profiles = list(ROBOT_REGISTRY.keys())
-        
-        if os.path.exists(robot_folder_path):
-            scanned_folders = [f for f in os.listdir(robot_folder_path) if os.path.isdir(os.path.join(robot_folder_path, f))]
-            if scanned_folders:
-                available_profiles = sorted(list(set(scanned_folders + available_profiles)))
+# --- 3. HARDWARE PROFILE INITIALIZATION LAYER ---
+robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
+available_profiles = list(ROBOT_REGISTRY.keys())
+if os.path.exists(robot_folder_path):
+    scanned_folders = [f for f in os.listdir(robot_folder_path) if os.path.isdir(os.path.join(robot_folder_path, f))]
+    if scanned_folders:
+        available_profiles = sorted(list(set(scanned_folders + available_profiles)))
 
-        selected_profile = st.selectbox(
-            "Select Active Hardware Profile", 
-            options=available_profiles,
-            key="robot_profile_selection"
-        )
+# Handle state exchange back from WebGL frontend
+query_params = st.query_params
+if "profile" in query_params:
+    st.session_state.robot_profile_selection = query_params.get("profile")
+
+selected_profile = st.session_state.get("robot_profile_selection", "ABB_6700")
+if selected_profile not in available_profiles:
+    selected_profile = available_profiles[0]
 
 active_cfg = ROBOT_REGISTRY.get(selected_profile, ROBOT_REGISTRY["ABB_6700"])
 
-# --- 4. CONFIGURATION ADJUSTED KINEMATICS ENGINE ---
+# --- 4. KINEMATICS ENGINE ---
 @st.cache_resource
 def build_robot_chain(profile_name, hardware_config):
     links_data = hardware_config["links"]
@@ -115,20 +114,6 @@ def build_robot_chain(profile_name, hardware_config):
 
 robot_chain = build_robot_chain(selected_profile, active_cfg)
 
-def get_link_transforms(angles):
-    matrices = robot_chain.forward_kinematics(angles[:7], full_kinematics=True)
-    transforms = []
-    for i, m in enumerate(matrices):
-        pos_val = m[:3, 3].tolist()
-        if i == 4:
-            m_corr = m.copy()
-            m_corr[:3, 3] += m_corr[:3, 0] * -1.0
-            pos_val = m_corr[:3, 3].tolist()
-        rot_matrix = m[:3, :3]
-        quat = R.from_matrix(rot_matrix).as_quat().tolist()
-        transforms.append({"pos": pos_val, "quat": quat})
-    return transforms
-
 @st.cache_data(show_spinner=False)
 def get_file_base64_cached(filepath, file_hash=""):
     if os.path.exists(filepath):
@@ -139,13 +124,7 @@ def get_file_base64_cached(filepath, file_hash=""):
             return ""
     return ""
 
-def get_file_hash(filepath):
-    if os.path.exists(filepath):
-        return str(os.path.getmtime(filepath))
-    return ""
-
 # --- 5. EVENT PARAMETER INTERCEPT LAYER ---
-query_params = st.query_params
 if "event" in query_params:
     event_type = query_params.get("event")
     if event_type == "sync_sequence":
@@ -155,65 +134,17 @@ if "event" in query_params:
             if len(raw_program) > 0:
                 st.session_state.j_angles = raw_program[-1]["angles"]
         except Exception as e:
-            st.error(f"Pendant sync failure: {e}")
+            pass
     elif event_type == "clear_sequence":
         st.session_state.program = []
         st.session_state.j_angles = [0.0] * 8
+    elif event_type == "change_profile":
+        st.session_state.robot_profile_selection = query_params.get("new_profile")
+        st.query_params.clear()
+        st.rerun()
     st.query_params.clear()
 
-# --- 6. OPERATOR INTERFACE CONTROLS ---
-with st.sidebar:
-    with st.expander("🛠️ Layout Setup", expanded=False):
-        if st.button("🔴 RESET GUN & JIG", use_container_width=True):
-            for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
-                if os.path.exists(f):
-                    try: os.remove(f)
-                    except: pass
-            st.session_state.program = []
-            st.session_state.j_angles = [0.0] * 8
-            st.cache_data.clear()      
-            st.cache_resource.clear()  
-            st.query_params.clear()
-            st.rerun()
-            
-        st.divider()
-        st.write("**🔫 Welding Gun Tooling**")
-        up_gun = st.file_uploader("Upload Gun STL", type=["stl"], key="gun_up")
-        if up_gun:
-            with open(os.path.join(TEMP_DIR, "gun.stl"), "wb") as f: 
-                f.write(up_gun.getbuffer())
-            st.cache_data.clear()
-        
-        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
-        g_rot_z = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
-        
-        st.divider()
-        st.write("**🏗️ Rotary Positioning Jig**")
-        up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
-        if up_jig:
-            with open(os.path.join(TEMP_DIR, "jig.stl"), "wb") as f: 
-                f.write(up_jig.getbuffer())
-            st.cache_data.clear()
-            
-        jx_pos = st.number_input("Jig Base X Location", value=1.6, step=0.1)
-        jy_pos = st.number_input("Jig Base Y Location", value=0.0, step=0.1)
-        jz_pos = st.number_input("Jig Base Z Elevation Level", value=0.55, step=0.01, format="%.3f")
-        
-        st.write("**📐 CAD Vector Calibration**")
-        j_rot_x = st.slider("CAD Rotate X Axis", -180, 180, 0, step=90)
-        j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
-        js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
-
-if 'g_off_x' not in locals(): g_off_x = 0.0
-if 'g_rot_z' not in locals(): g_rot_z = 180
-if 'jx_pos' not in locals(): jx_pos = 1.6
-if 'jy_pos' not in locals(): jy_pos = 0.0
-if 'jz_pos' not in locals(): jz_pos = 0.55
-if 'j_rot_x' not in locals(): j_rot_x = 0
-if 'j_rot_y' not in locals(): j_rot_y = 0
-if 'js_scale' not in locals(): js_scale = 0.001
-
-# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT ---
+# --- 6. VIRTUAL EMBEDDED VIEWPORT (ALL CONFIGS INSIDE WEBGL) ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -226,39 +157,119 @@ def build_embedded_viewport(payload):
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
         <style>
-            body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; }
+            body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; color: white; }
             #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
-            #status { position: absolute; top: 10px; left: 10px; color: #ffffff; font-size: 13px; background: rgba(20,20,20,0.8); padding: 6px 12px; border-radius:4px; border: 1px solid #333; z-index: 10; }
-            #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 220px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-            .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
+            
+            /* Modern Integrated Control Overlay Panels */
+            .control-panel { position: absolute; background: rgba(20, 20, 20, 0.85); border: 1px solid #333; border-radius: 8px; padding: 12px; z-index: 10; box-shadow: 0 4px 20px rgba(0,0,0,0.6); backdrop-filter: blur(5px); }
+            #hardware-panel { top: 10px; left: 10px; width: 260px; }
+            #jog-pendant { top: 10px; right: 10px; width: 240px; border: 1px solid #ff9800; }
+            
+            .panel-header { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+            .section-title { font-size: 11px; font-weight: bold; color: #00ffcc; margin-top: 10px; margin-bottom: 6px; text-transform: uppercase; border-bottom: 1px solid #222; padding-bottom: 2px;}
+            
             .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
             .jog-label { font-size: 12px; font-weight: bold; font-family: monospace; color: #bbb; }
-            .jog-btn { background: #222; border: 1px solid #444; color: white; width: 45px; height: 26px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; transition: all 0.1s; }
+            .jog-btn { background: #222; border: 1px solid #444; color: white; width: 45px; height: 26px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; }
             .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
             .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
-            .action-block { margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-            .btn-action { width: 100%; border: none; font-weight: bold; height: 32px; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: background 0.1s; }
+            
+            .ui-select { background: #222; color: white; border: 1px solid #444; padding: 6px; width: 100%; border-radius: 4px; font-size: 12px; margin-bottom: 8px; }
+            .ui-slider-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+            .ui-slider-label { font-size: 11px; color: #aaa; display: flex; justify-content: space-between; }
+            .ui-slider { width: 100%; accent-color: #ff9800; margin: 2px 0; }
+            
+            /* File Input Styling matching Icon Layout */
+            .file-upload-btn { position: relative; display: flex; align-items: center; justify-content: center; background: #2a2a2a; border: 1px dashed #555; padding: 6px; border-radius: 4px; font-size: 11px; cursor: pointer; text-align: center; margin-bottom: 6px; transition: all 0.2s; }
+            .file-upload-btn:hover { background: #3a3a3a; border-color: #00ffcc; }
+            .file-upload-btn input[type="file"] { position: absolute; left: 0; top: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+
+            .btn-action { width: 100%; border: none; font-weight: bold; height: 30px; border-radius: 4px; cursor: pointer; font-size: 11px; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 4px; }
+            .btn-danger { background: #d32f2f; color: white; }
+            .btn-danger:hover { background: #f44336; }
             #btn-save-step { background: #ff9800; color: black; }
             #btn-run-sim { background: #4caf50; color: white; }
             #btn-clear-seq { background: #f44336; color: white; }
-            .step-counter { font-size: 12px; font-family: monospace; text-align: center; color: #aaa; margin-top: 2px; }
+            
+            .toggle-panel-btn { background: none; border: none; color: #ff9800; cursor: pointer; font-size: 14px; padding: 0 5px; }
+            .collapsed { height: 18px !important; overflow: hidden; padding-bottom: 0 !important; width: 180px !important; }
         </style>
     </head>
     <body>
-        <div id="status">WebGL Processing...</div>
-        <div id="jog-pendant">
-            <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
-            <div id="jog-rows-container"></div>
-            <div class="action-block">
-                <div class="jog-row" style="margin-bottom: 4px;">
+        <div id="hardware-panel" class="control-panel">
+            <div class="panel-header">
+                <span>⚙️ HARDWARE SETUP</span>
+                <button class="toggle-panel-btn" onclick="togglePanel('hardware-panel')">⌃</button>
+            </div>
+            <div class="panel-content">
+                <label class="ui-slider-label"><span style="color:#ff9800; font-weight:bold;">Active Robot Profile</span></label>
+                <select id="profile-selector" class="ui-select"></select>
+                
+                <div class="section-title">🔫 Tooling (Welding Gun)</div>
+                <div class="file-upload-btn">
+                    <span>📁 Load Gun STL File</span>
+                    <input type="file" id="file-gun" accept=".stl">
+                </div>
+                <div class="ui-slider-group">
+                    <div class="ui-slider-label"><span>Gun Offset X (TCP)</span><span id="lbl-g-off-x">0.00m</span></div>
+                    <input type="range" id="sld-g-off-x" min="-0.5" max="0.5" value="0.0" step="0.01" class="ui-slider">
+                </div>
+                <div class="ui-slider-group">
+                    <div class="ui-slider-label"><span>Gun Twist (Y-Rot)</span><span id="lbl-g-rot-z">180°</span></div>
+                    <input type="range" id="sld-g-rot-z" min="-180" max="180" value="180" step="90" class="ui-slider">
+                </div>
+
+                <div class="section-title">🏗️ Rotary Positioner Jig</div>
+                <div class="file-upload-btn">
+                    <span>📁 Load Jig STL File</span>
+                    <input type="file" id="file-jig" accept=".stl">
+                </div>
+                <div class="ui-slider-group">
+                    <div class="ui-slider-label"><span>Base Position X</span><span id="lbl-jx">1.60m</span></div>
+                    <input type="range" id="sld-jx" min="0.5" max="3.0" value="1.6" step="0.05" class="ui-slider">
+                </div>
+                <div class="ui-slider-group">
+                    <div class="ui-slider-label"><span>Base Position Y</span><span id="lbl-jy">0.00m</span></div>
+                    <input type="range" id="sld-jy" min="-1.5" max="1.5" value="0.0" step="0.05" class="ui-slider">
+                </div>
+                <div class="ui-slider-group">
+                    <div class="ui-slider-label"><span>Elevation Level Z</span><span id="lbl-jz">0.55m</span></div>
+                    <input type="range" id="sld-jz" min="0.0" max="1.5" value="0.55" step="0.01" class="ui-slider">
+                </div>
+                <div class="ui-slider-group">
+                    <div class="ui-slider-label"><span>CAD Alignment Rot X</span><span id="lbl-jrot-x">0°</span></div>
+                    <input type="range" id="sld-jrot-x" min="-180" max="180" value="0" step="90" class="ui-slider">
+                </div>
+                <div class="ui-slider-group">
+                    <div class="ui-slider-label"><span>CAD Alignment Rot Y</span><span id="lbl-jrot-y">0°</span></div>
+                    <input type="range" id="sld-jrot-y" min="-180" max="180" value="0" step="90" class="ui-slider">
+                </div>
+                <div class="ui-slider-group">
+                    <div class="ui-slider-label"><span>Geometry Scale</span><span id="lbl-jscale">0.001</span></div>
+                    <input type="range" id="sld-jscale" min="0.0001" max="0.01" value="0.001" step="0.0001" class="ui-slider">
+                </div>
+
+                <button class="btn-action btn-danger" id="btn-hardware-reset" style="margin-top:10px;">🔴 RESET GUN & JIG SYSTEM</button>
+            </div>
+        </div>
+
+        <div id="jog-pendant" class="control-panel">
+            <div class="panel-header">
+                <span>⚡ INSTANT JOG PENDANT</span>
+                <button class="toggle-panel-btn" onclick="togglePanel('jog-pendant')">⌃</button>
+            </div>
+            <div class="panel-content">
+                <div id="jog-rows-container"></div>
+                <div class="section-title">Simulation Execution</div>
+                <div class="jog-row" style="margin-bottom: 8px;">
                     <div class="jog-label" style="font-size: 11px; color: #aaa;">SPEED</div>
-                    <input type="range" id="sld-speed" min="5" max="100" value="50" step="5" style="flex-grow: 1; margin: 0 10px; accent-color: #ff9800;">
+                    <input type="range" id="sld-speed" min="5" max="100" value="50" step="5" style="flex-grow: 1; margin: 0 8px; accent-color: #ff9800;">
                     <div class="val-display" id="val-speed" style="width: 35px; color: #ff9800; font-weight: bold;">50%</div>
                 </div>
                 <button class="btn-action" id="btn-save-step">💾 RECORD STEP POSITION</button>
                 <button class="btn-action" id="btn-run-sim">▶️ RUN SIMULATION</button>
                 <button class="btn-action" id="btn-clear-seq">🗑️ CLEAR SEQUENCE</button>
-                <div class="step-counter" id="lbl-steps">Steps: 0</div>
+                <div style="font-size: 12px; font-family: monospace; text-align: center; color: #aaa; margin-top: 6px;" id="lbl-steps">Steps: 0</div>
             </div>
         </div>
 
@@ -273,6 +284,38 @@ def build_embedded_viewport(payload):
             let embeddedTrajectory = [...data.trajectory];
             
             const J_STEP = 5 * (Math.PI / 180);
+
+            // Interface Control Variables
+            let gunOffset = data.gunOffset;
+            let gunRotZ = data.gunRotZ;
+            let jigX = data.jigX;
+            let jigY = data.jigY;
+            let jigZ = data.jigZ;
+            let jigRotX = data.rotX;
+            let jigRotY = data.rotY;
+            let jigScale = data.jigScale;
+
+            function togglePanel(id) {
+                const el = document.getElementById(id);
+                el.classList.toggle('collapsed');
+                el.querySelector('.toggle-panel-btn').innerText = el.classList.contains('collapsed') ? '⌄' : '⌃';
+            }
+
+            // Populate Robot Selector Options
+            const sel = document.getElementById('profile-selector');
+            data.availableProfiles.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p;
+                opt.innerText = p;
+                if(p === data.profileName) opt.selected = true;
+                sel.appendChild(opt);
+            });
+            sel.addEventListener('change', (e) => {
+                const targetUrl = new URL(window.parent.location.href);
+                targetUrl.searchParams.set("event", "change_profile");
+                targetUrl.searchParams.set("new_profile", e.target.value);
+                window.parent.location.href = targetUrl.toString();
+            });
 
             THREE.Object3D.DefaultUp.set(0, 0, 1);
             const container = document.getElementById('canvas-container');
@@ -316,17 +359,16 @@ def build_embedded_viewport(payload):
                 return bytes.buffer;
             }
 
-            // --- COLOR ASSIGNMENT LOGIC ---
-            let targetColor = 0xcccccc; // Default light grey for ABB models
+            // Brand-specific Coloring Logic
+            let targetColor = 0xcccccc; 
             if (data.profileName === "Yaskawa_3500") {
-                targetColor = 0x0055ff; // Blue
+                targetColor = 0x0055ff; 
             } else if (data.profileName === "KUKA_KR150") {
-                targetColor = 0xff6600; // Orange
+                targetColor = 0xff6600; 
             }
 
             for(let i=0; i<7; i++) {
                 let mesh;
-                // Base Link (Index 0) stays dark grey; moving components get the profile target color
                 let currentLinkColor = (i === 0) ? 0x222222 : targetColor;
 
                 if(data.linkGeometries && data.linkGeometries[i] && data.linkGeometries[i].length > 0) {
@@ -344,25 +386,106 @@ def build_embedded_viewport(payload):
                 links.push(mesh);
             }
 
-            if(data.gunData && data.gunData.length > 0) {
-                const geometry = loader.parse(base64ToArrayBuffer(data.gunData));
+            // Base Loader Functions for Tooling and Workpieces
+            function parseAndApplyGunMesh(buffer) {
+                gunMesh.clear();
+                const geometry = loader.parse(buffer);
                 geometry.center(); 
                 geometry.rotateY(Math.PI / 2);
                 const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
                 gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
-                gunInternalMesh.rotation.y = data.gunRotZ; 
+                gunInternalMesh.rotation.y = gunRotZ; 
                 gunMesh.add(gunInternalMesh);
+                refreshPositions();
             }
 
-            if(data.jigData && data.jigData.length > 0) {
-                const geometry = loader.parse(base64ToArrayBuffer(data.jigData));
+            function parseAndApplyJigMesh(buffer) {
+                internalJigContent.clear();
+                const geometry = loader.parse(buffer);
                 geometry.center(); 
                 const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.6 }));
-                m.scale.set(data.jigScale, data.jigScale, data.jigScale);
-                m.rotation.x = data.rotX;
-                m.rotation.y = data.rotY;
+                m.scale.set(jigScale, jigScale, jigScale);
+                m.rotation.x = jigRotX;
+                m.rotation.y = jigRotY;
                 internalJigContent.add(m);
+                refreshPositions();
             }
+
+            if(data.gunData && data.gunData.length > 0) {
+                parseAndApplyGunMesh(base64ToArrayBuffer(data.gunData));
+            }
+            if(data.jigData && data.jigData.length > 0) {
+                parseAndApplyJigMesh(base64ToArrayBuffer(data.jigData));
+            }
+
+            // Real-time File Processing Listeners
+            document.getElementById('file-gun').addEventListener('change', (e) => {
+                const reader = new FileReader();
+                reader.onload = function (event) { parseAndApplyGunMesh(event.target.result); };
+                if(e.target.files[0]) reader.readAsArrayBuffer(e.target.files[0]);
+            });
+
+            document.getElementById('file-jig').addEventListener('change', (e) => {
+                const reader = new FileReader();
+                reader.onload = function (event) { parseAndApplyJigMesh(event.target.result); };
+                if(e.target.files[0]) reader.readAsArrayBuffer(e.target.files[0]);
+            });
+
+            // Interactive Sliders Event Registration
+            document.getElementById('sld-g-off-x').addEventListener('input', (e) => {
+                gunOffset = parseFloat(e.target.value);
+                document.getElementById('lbl-g-off-x').innerText = gunOffset.toFixed(2) + "m";
+                refreshPositions();
+            });
+            document.getElementById('sld-g-rot-z').addEventListener('input', (e) => {
+                gunRotZ = parseFloat(e.target.value) * (Math.PI / 180.0);
+                document.getElementById('lbl-g-rot-z').innerText = e.target.value + "°";
+                if(gunMesh.children[0]) gunMesh.children[0].rotation.y = gunRotZ;
+                refreshPositions();
+            });
+            document.getElementById('sld-jx').addEventListener('input', (e) => {
+                jigX = parseFloat(e.target.value);
+                document.getElementById('lbl-jx').innerText = jigX.toFixed(2) + "m";
+                refreshPositions();
+            });
+            document.getElementById('sld-jy').addEventListener('input', (e) => {
+                jigY = parseFloat(e.target.value);
+                document.getElementById('lbl-jy').innerText = jigY.toFixed(2) + "m";
+                refreshPositions();
+            });
+            document.getElementById('sld-jz').addEventListener('input', (e) => {
+                jigZ = parseFloat(e.target.value);
+                document.getElementById('lbl-jz').innerText = jigZ.toFixed(2) + "m";
+                refreshPositions();
+            });
+            document.getElementById('sld-jrot-x').addEventListener('input', (e) => {
+                jigRotX = parseFloat(e.target.value) * (Math.PI / 180.0);
+                document.getElementById('lbl-jrot-x').innerText = e.target.value + "°";
+                if(internalJigContent.children[0]) internalJigContent.children[0].rotation.x = jigRotX;
+            });
+            document.getElementById('sld-jrot-y').addEventListener('input', (e) => {
+                jigRotY = parseFloat(e.target.value) * (Math.PI / 180.0);
+                document.getElementById('lbl-jrot-y').innerText = e.target.value + "°";
+                if(internalJigContent.children[0]) internalJigContent.children[0].rotation.y = jigRotY;
+            });
+            document.getElementById('sld-jscale').addEventListener('input', (e) => {
+                jigScale = parseFloat(e.target.value);
+                document.getElementById('lbl-jscale').innerText = jigScale.toFixed(4);
+                if(internalJigContent.children[0]) internalJigContent.children[0].scale.set(jigScale, jigScale, jigScale);
+            });
+
+            document.getElementById('btn-hardware-reset').addEventListener('click', () => {
+                gunMesh.clear();
+                internalJigContent.clear();
+                embeddedTrajectory = [];
+                localJointAngles = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+                updateUIElements();
+                
+                // Synchronize system environment structure wipe
+                const targetUrl = new URL(window.parent.location.href);
+                targetUrl.searchParams.set("event", "clear_sequence");
+                window.parent.location.href = targetUrl.toString();
+            });
 
             function getLinkStructureBaseMatrix(linkData) {
                 let mTrans = new THREE.Matrix4().makeTranslation(linkData.trans[0], linkData.trans[1], linkData.trans[2]);
@@ -452,7 +575,7 @@ def build_embedded_viewport(payload):
                 return computedTransforms;
             }
 
-            function updateSceneTransforms(transforms, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
+            function updateSceneTransforms(transforms, offsetValue, jX, jY, jZ, e1RotAngle) {
                 for(let i=0; i<7; i++) {
                     if(links[i] && transforms[i]) {
                         links[i].position.fromArray(transforms[i].pos);
@@ -465,13 +588,18 @@ def build_embedded_viewport(payload):
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
                     if (data.profileName === "Yaskawa_3500") {
-                        gunMesh.translateZ(-gunOffset);
+                        gunMesh.translateZ(-offsetValue);
                     } else {
-                        gunMesh.translateX(gunOffset);
+                        gunMesh.translateX(offsetValue);
                     }
                 }
-                jigMesh.position.set(jigX, jigY, jigZ);
+                jigMesh.position.set(jX, jY, jZ);
                 internalJigContent.rotation.z = e1RotAngle;
+            }
+
+            function refreshPositions() {
+                lastComputedTransforms = computeForwardKinematics(localJointAngles);
+                updateSceneTransforms(lastComputedTransforms, gunOffset, jigX, jigY, jigZ, localJointAngles[7]);
             }
 
             const rowsContainer = document.getElementById('jog-rows-container');
@@ -494,9 +622,9 @@ def build_embedded_viewport(payload):
             
             const e1Row = document.createElement('div');
             e1Row.className = 'jog-row';
-            e1Row.style.marginTop = '10px';
+            e1Row.style.marginTop = '8px';
             e1Row.style.borderTop = '1px solid #333';
-            e1Row.style.paddingTop = '8px';
+            e1Row.style.paddingTop = '6px';
             e1Row.innerHTML = `
                 <button class="jog-btn" id="btn-m-7">-</button>
                 <div class="jog-label" style="color:#ff9800;">E1</div>
@@ -513,9 +641,7 @@ def build_embedded_viewport(payload):
                 localJointAngles[jointIdx] += direction * J_STEP;
                 const degValue = (localJointAngles[jointIdx] * (180 / Math.PI)).toFixed(1);
                 document.getElementById(`val-${jointIdx}`).innerText = `${degValue}°`;
-                
-                lastComputedTransforms = computeForwardKinematics(localJointAngles);
-                updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
+                refreshPositions();
             }
 
             function updateUIElements() {
@@ -569,7 +695,6 @@ def build_embedded_viewport(payload):
 
                 if (runSimulation && embeddedTrajectory.length >= 2) {
                     document.getElementById('jog-pendant').style.opacity = "0.3"; 
-                    document.getElementById('status').innerText = "Status: Running Sequence Simulation";
                     let currentPoint = embeddedTrajectory[simStepIndex];
                     let nextPoint = embeddedTrajectory[simStepIndex + 1];
 
@@ -599,10 +724,9 @@ def build_embedded_viewport(payload):
                         blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
                     }
                     let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
-                    updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
+                    updateSceneTransforms(blendedTransforms, gunOffset, jigX, jigY, jigZ, intermediateE1);
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
-                    document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
                 }
                 renderer.render(scene, camera);
             }
@@ -613,19 +737,23 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            lastComputedTransforms = computeForwardKinematics(localJointAngles);
-            updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
+            refreshPositions();
             animate();
         </script>
     </body>
     </html>
     """.replace("__PAYLOAD_OBJECT__", json_stream)
     
-    components.html(html_source, height=750, scrolling=False)
+    components.html(html_source, height=780, scrolling=False)
 
-# --- 8. DYNAMIC HARDWARE FILE BINDING LAYER ---
+# --- 7. DYNAMIC HARDWARE FILE BINDING LAYER ---
 path_gun = os.path.join(TEMP_DIR, "gun.stl")
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
+
+def get_file_hash(filepath):
+    if os.path.exists(filepath):
+        return str(os.path.getmtime(filepath))
+    return ""
 
 link_b64s = []
 for i in range(7):
@@ -639,6 +767,7 @@ for i in range(7):
 
 scene_payload = {
     "profileName": selected_profile,
+    "availableProfiles": available_profiles,
     "trajectory": st.session_state.program,
     "initialAngles": st.session_state.j_angles,
     "linkGeometries": link_b64s,
@@ -646,14 +775,14 @@ scene_payload = {
     "dhConfig": active_cfg["links"],
     "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
     "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
-    "gunOffset": g_off_x,
-    "gunRotZ": float(g_rot_z) * (np.pi / 180.0),
-    "jigX": jx_pos,
-    "jigY": jy_pos,
-    "jigZ": jz_pos,
-    "rotX": float(j_rot_x) * (np.pi / 180.0),
-    "rotY": float(j_rot_y) * (np.pi / 180.0),
-    "jigScale": js_scale
+    "gunOffset": 0.0, 
+    "gunRotZ": np.pi,
+    "jigX": 1.6,
+    "jigY": 0.0,
+    "jigZ": 0.55,
+    "rotX": 0.0,
+    "rotY": 0.0,
+    "jigScale": 0.001
 }
 
 build_embedded_viewport(scene_payload)
