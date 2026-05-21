@@ -87,7 +87,6 @@ if os.path.exists(robot_folder_path):
     if scanned_folders:
         available_profiles = sorted(list(set(scanned_folders + available_profiles)))
 
-# Handle state exchange back from WebGL frontend
 query_params = st.query_params
 if "profile" in query_params:
     st.session_state.robot_profile_selection = query_params.get("profile")
@@ -144,7 +143,7 @@ if "event" in query_params:
         st.rerun()
     st.query_params.clear()
 
-# --- 6. VIRTUAL EMBEDDED VIEWPORT (ALL CONFIGS INSIDE WEBGL) ---
+# --- 6. VIRTUAL EMBEDDED VIEWPORT ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -160,7 +159,6 @@ def build_embedded_viewport(payload):
             body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; color: white; }
             #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
             
-            /* Modern Integrated Control Overlay Panels */
             .control-panel { position: absolute; background: rgba(20, 20, 20, 0.85); border: 1px solid #333; border-radius: 8px; padding: 12px; z-index: 10; box-shadow: 0 4px 20px rgba(0,0,0,0.6); backdrop-filter: blur(5px); }
             #hardware-panel { top: 10px; left: 10px; width: 260px; }
             #jog-pendant { top: 10px; right: 10px; width: 240px; border: 1px solid #ff9800; }
@@ -179,7 +177,6 @@ def build_embedded_viewport(payload):
             .ui-slider-label { font-size: 11px; color: #aaa; display: flex; justify-content: space-between; }
             .ui-slider { width: 100%; accent-color: #ff9800; margin: 2px 0; }
             
-            /* File Input Styling matching Icon Layout */
             .file-upload-btn { position: relative; display: flex; align-items: center; justify-content: center; background: #2a2a2a; border: 1px dashed #555; padding: 6px; border-radius: 4px; font-size: 11px; cursor: pointer; text-align: center; margin-bottom: 6px; transition: all 0.2s; }
             .file-upload-btn:hover { background: #3a3a3a; border-color: #00ffcc; }
             .file-upload-btn input[type="file"] { position: absolute; left: 0; top: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
@@ -212,11 +209,11 @@ def build_embedded_viewport(payload):
                 </div>
                 <div class="ui-slider-group">
                     <div class="ui-slider-label"><span>Gun Offset X (TCP)</span><span id="lbl-g-off-x">0.00m</span></div>
-                    <input type="range" id="sld-g-off-x" min="-0.5" max="0.5" value="0.0" step="0.01" class="ui-slider">
+                    <input type="range" id="sld-g-off-x" min="-0.5" max="0.5" step="0.01" class="ui-slider">
                 </div>
                 <div class="ui-slider-group">
                     <div class="ui-slider-label"><span>Gun Twist (Y-Rot)</span><span id="lbl-g-rot-z">180°</span></div>
-                    <input type="range" id="sld-g-rot-z" min="-180" max="180" value="180" step="90" class="ui-slider">
+                    <input type="range" id="sld-g-rot-z" min="-180" max="180" step="90" class="ui-slider">
                 </div>
 
                 <div class="section-title">🏗️ Rotary Positioner Jig</div>
@@ -226,27 +223,27 @@ def build_embedded_viewport(payload):
                 </div>
                 <div class="ui-slider-group">
                     <div class="ui-slider-label"><span>Base Position X</span><span id="lbl-jx">1.60m</span></div>
-                    <input type="range" id="sld-jx" min="0.5" max="3.0" value="1.6" step="0.05" class="ui-slider">
+                    <input type="range" id="sld-jx" min="0.5" max="3.0" step="0.05" class="ui-slider">
                 </div>
                 <div class="ui-slider-group">
                     <div class="ui-slider-label"><span>Base Position Y</span><span id="lbl-jy">0.00m</span></div>
-                    <input type="range" id="sld-jy" min="-1.5" max="1.5" value="0.0" step="0.05" class="ui-slider">
+                    <input type="range" id="sld-jy" min="-1.5" max="1.5" step="0.05" class="ui-slider">
                 </div>
                 <div class="ui-slider-group">
                     <div class="ui-slider-label"><span>Elevation Level Z</span><span id="lbl-jz">0.55m</span></div>
-                    <input type="range" id="sld-jz" min="0.0" max="1.5" value="0.55" step="0.01" class="ui-slider">
+                    <input type="range" id="sld-jz" min="0.0" max="1.5" step="0.01" class="ui-slider">
                 </div>
                 <div class="ui-slider-group">
                     <div class="ui-slider-label"><span>CAD Alignment Rot X</span><span id="lbl-jrot-x">0°</span></div>
-                    <input type="range" id="sld-jrot-x" min="-180" max="180" value="0" step="90" class="ui-slider">
+                    <input type="range" id="sld-jrot-x" min="-180" max="180" step="90" class="ui-slider">
                 </div>
                 <div class="ui-slider-group">
                     <div class="ui-slider-label"><span>CAD Alignment Rot Y</span><span id="lbl-jrot-y">0°</span></div>
-                    <input type="range" id="sld-jrot-y" min="-180" max="180" value="0" step="90" class="ui-slider">
+                    <input type="range" id="sld-jrot-y" min="-180" max="180" step="90" class="ui-slider">
                 </div>
                 <div class="ui-slider-group">
                     <div class="ui-slider-label"><span>Geometry Scale</span><span id="lbl-jscale">0.001</span></div>
-                    <input type="range" id="sld-jscale" min="0.0001" max="0.01" value="0.001" step="0.0001" class="ui-slider">
+                    <input type="range" id="sld-jscale" min="0.0001" max="0.01" step="0.0001" class="ui-slider">
                 </div>
 
                 <button class="btn-action btn-danger" id="btn-hardware-reset" style="margin-top:10px;">🔴 RESET GUN & JIG SYSTEM</button>
@@ -285,7 +282,7 @@ def build_embedded_viewport(payload):
             
             const J_STEP = 5 * (Math.PI / 180);
 
-            // Interface Control Variables
+            // Bind explicitly to incoming data values to preserve your exact default configuration states
             let gunOffset = data.gunOffset;
             let gunRotZ = data.gunRotZ;
             let jigX = data.jigX;
@@ -295,13 +292,37 @@ def build_embedded_viewport(payload):
             let jigRotY = data.rotY;
             let jigScale = data.jigScale;
 
+            // Initialize DOM slider values directly from the configured payload props
+            document.getElementById('sld-g-off-x').value = gunOffset;
+            document.getElementById('lbl-g-off-x').innerText = gunOffset.toFixed(2) + "m";
+            
+            document.getElementById('sld-g-rot-z').value = Math.round(gunRotZ * (180.0 / Math.PI));
+            document.getElementById('lbl-g-rot-z').innerText = Math.round(gunRotZ * (180.0 / Math.PI)) + "°";
+            
+            document.getElementById('sld-jx').value = jigX;
+            document.getElementById('lbl-jx').innerText = jigX.toFixed(2) + "m";
+            
+            document.getElementById('sld-jy').value = jigY;
+            document.getElementById('lbl-jy').innerText = jigY.toFixed(2) + "m";
+            
+            document.getElementById('sld-jz').value = jigZ;
+            document.getElementById('lbl-jz').innerText = jigZ.toFixed(2) + "m";
+            
+            document.getElementById('sld-jrot-x').value = Math.round(jigRotX * (180.0 / Math.PI));
+            document.getElementById('lbl-jrot-x').innerText = Math.round(jigRotX * (180.0 / Math.PI)) + "°";
+            
+            document.getElementById('sld-jrot-y').value = Math.round(jigRotY * (180.0 / Math.PI));
+            document.getElementById('lbl-jrot-y').innerText = Math.round(jigRotY * (180.0 / Math.PI)) + "°";
+            
+            document.getElementById('sld-jscale').value = jigScale;
+            document.getElementById('lbl-jscale').innerText = jigScale.toFixed(4);
+
             function togglePanel(id) {
                 const el = document.getElementById(id);
                 el.classList.toggle('collapsed');
                 el.querySelector('.toggle-panel-btn').innerText = el.classList.contains('collapsed') ? '⌄' : '⌃';
             }
 
-            // Populate Robot Selector Options
             const sel = document.getElementById('profile-selector');
             data.availableProfiles.forEach(p => {
                 const opt = document.createElement('option');
@@ -359,7 +380,7 @@ def build_embedded_viewport(payload):
                 return bytes.buffer;
             }
 
-            // Brand-specific Coloring Logic
+            // Brand Colors
             let targetColor = 0xcccccc; 
             if (data.profileName === "Yaskawa_3500") {
                 targetColor = 0x0055ff; 
@@ -386,7 +407,6 @@ def build_embedded_viewport(payload):
                 links.push(mesh);
             }
 
-            // Base Loader Functions for Tooling and Workpieces
             function parseAndApplyGunMesh(buffer) {
                 gunMesh.clear();
                 const geometry = loader.parse(buffer);
@@ -418,7 +438,6 @@ def build_embedded_viewport(payload):
                 parseAndApplyJigMesh(base64ToArrayBuffer(data.jigData));
             }
 
-            // Real-time File Processing Listeners
             document.getElementById('file-gun').addEventListener('change', (e) => {
                 const reader = new FileReader();
                 reader.onload = function (event) { parseAndApplyGunMesh(event.target.result); };
@@ -431,7 +450,6 @@ def build_embedded_viewport(payload):
                 if(e.target.files[0]) reader.readAsArrayBuffer(e.target.files[0]);
             });
 
-            // Interactive Sliders Event Registration
             document.getElementById('sld-g-off-x').addEventListener('input', (e) => {
                 gunOffset = parseFloat(e.target.value);
                 document.getElementById('lbl-g-off-x').innerText = gunOffset.toFixed(2) + "m";
@@ -481,7 +499,6 @@ def build_embedded_viewport(payload):
                 localJointAngles = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
                 updateUIElements();
                 
-                // Synchronize system environment structure wipe
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "clear_sequence");
                 window.parent.location.href = targetUrl.toString();
@@ -765,6 +782,7 @@ for i in range(7):
         
     link_b64s.append(get_file_base64_cached(target_mesh_path))
 
+# Maintain precise structural engineering defaults matching your model offset rules
 scene_payload = {
     "profileName": selected_profile,
     "availableProfiles": available_profiles,
