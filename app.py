@@ -87,7 +87,7 @@ if os.path.exists(robot_folder_path):
     if scanned_folders:
         available_profiles = sorted(list(set(scanned_folders + available_profiles)))
 
-# Read selection parameters from query parameters
+# Read custom parameters securely from query parameters
 query_params = st.query_params
 if "profile" in query_params:
     st.session_state.robot_profile_selection = query_params.get("profile")
@@ -133,17 +133,16 @@ if "event" in query_params:
             st.session_state.program = raw_program
             if len(raw_program) > 0:
                 st.session_state.j_angles = raw_program[-1]["angles"]
-        except Exception as e:
+        except Exception:
             pass
     elif event_type == "clear_sequence":
         st.session_state.program = []
         st.session_state.j_angles = [0.0] * 8
     
-    # Direct cleanup after structural interceptions
     st.query_params.clear()
     st.query_params.profile = selected_profile
 
-# --- 6. VIRTUAL EMBEDDED VIEWPORT (OPTION 2 FIXED) ---
+# --- 6. VIRTUAL EMBEDDED VIEWPORT (WITH LOAD ROBOT BUTTON) ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -172,7 +171,7 @@ def build_embedded_viewport(payload):
             .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
             .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
             
-            .ui-select { background: #222; color: white; border: 1px solid #444; padding: 6px; width: 100%; border-radius: 4px; font-size: 12px; margin-bottom: 8px; font-weight: bold; }
+            .ui-select { background: #222; color: white; border: 1px solid #444; padding: 6px; width: 100%; border-radius: 4px; font-size: 12px; margin-bottom: 4px; font-weight: bold; }
             .ui-slider-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
             .ui-slider-label { font-size: 11px; color: #aaa; display: flex; justify-content: space-between; }
             .ui-slider { width: 100%; accent-color: #ff9800; margin: 2px 0; }
@@ -188,6 +187,10 @@ def build_embedded_viewport(payload):
             #btn-run-sim { background: #4caf50; color: white; }
             #btn-clear-seq { background: #f44336; color: white; }
             
+            /* High visibility design for profile switching action button */
+            #btn-load-robot { background: #00ffcc; color: #111; margin-bottom: 12px; transition: background 0.2s; }
+            #btn-load-robot:hover { background: #00b399; }
+            
             .toggle-panel-btn { background: none; border: none; color: #ff9800; cursor: pointer; font-size: 14px; padding: 0 5px; }
             .collapsed { height: 18px !important; overflow: hidden; padding-bottom: 0 !important; width: 180px !important; }
         </style>
@@ -199,8 +202,9 @@ def build_embedded_viewport(payload):
                 <button class="toggle-panel-btn" onclick="togglePanel('hardware-panel')">⌃</button>
             </div>
             <div class="panel-content">
-                <label class="ui-slider-label"><span style="color:#ff9800; font-weight:bold;">Active Robot Profile</span></label>
+                <label class="ui-slider-label"><span style="color:#ff9800; font-weight:bold;">Select Robot Profile</span></label>
                 <select id="profile-selector" class="ui-select"></select>
+                <button class="btn-action" id="btn-load-robot">🤖 LOAD SELECTED ROBOT</button>
                 
                 <div class="section-title">🔫 Tooling (Welding Gun)</div>
                 <div class="file-upload-btn">
@@ -282,6 +286,7 @@ def build_embedded_viewport(payload):
             
             const J_STEP = 5 * (Math.PI / 180);
 
+            // STABLE OFFSETS - PREVENTS DISPLACEMENT AND DETACHMENT FLIPS
             let gunOffset = data.gunOffset;
             let gunRotZ = data.gunRotZ;
             let jigX = data.jigX;
@@ -314,7 +319,7 @@ def build_embedded_viewport(payload):
                 el.querySelector('.toggle-panel-btn').innerText = el.classList.contains('collapsed') ? '⌄' : '⌃';
             }
 
-            // --- ESCAPE IFRAME AND REWRITE PARENT LOCATION ---
+            // POPULATE CHANNELS EXPLICITLY
             const sel = document.getElementById('profile-selector');
             data.availableProfiles.forEach(p => {
                 const opt = document.createElement('option');
@@ -324,10 +329,10 @@ def build_embedded_viewport(payload):
                 sel.appendChild(opt);
             });
             
-            sel.addEventListener('change', (e) => {
-                // Modified handler explicitly targeting top parent frame URL context
+            // "LOAD SELECTED ROBOT" BUTTON TRIGGER CLICK EVENT
+            document.getElementById('btn-load-robot').addEventListener('click', () => {
                 const parentUrl = new URL(window.parent.location.href);
-                parentUrl.searchParams.set("profile", e.target.value);
+                parentUrl.searchParams.set("profile", sel.value);
                 window.parent.location.href = parentUrl.toString();
             });
 
