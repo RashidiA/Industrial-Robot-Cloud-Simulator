@@ -71,15 +71,15 @@ ROBOT_REGISTRY = {
             {"name": "A1", "trans": [0.0, 0.0, 0.50],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
             {"name": "A2", "trans": [0.16, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [0.0, 0.0, 0.9],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [0.0, 0.0, -0.8],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [1.0, 0.0, 1.0],    "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [1.0, 0.0, 0.2],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.0, 0.0, 0.0],    "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A6", "trans": [0.0, 0.0, -0.17],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.70, 0.45, 1.15, 0.35, 0.18, 0.18, 0.10]
     }
 }
 
-# --- 3. SELECTION INITIALIZATION LAYER (DYNAMIC DIRECTORY SCAN) ---
+# --- 3. SELECTION INITIALIZATION LAYER ---
 with st.sidebar:
     st.title("📟 Teach Pendant Pro")
     with st.expander("🛠️ Layout Setup", expanded=True):
@@ -402,16 +402,22 @@ def build_embedded_viewport(payload):
                 m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
                 
-                let correctionMatrix = currentMatrix.clone();
-                // FIX: Swap projection vector to align with the downward oriented translation of Yaskawa configuration
-                let dirVec = (data.profileName === "Yaskawa_3500") ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(1, 0, 0);
-                let directionVector = dirVec.applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
-                let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
-                
-                computedTransforms.push({
-                    pos: fixedPos.toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                // FIX: If Yaskawa, bypass the hardcoded ABB vector translation subtraction that causes Axis 4's massive radius detachment.
+                if (data.profileName === "Yaskawa_3500") {
+                    computedTransforms.push({
+                        pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
+                        quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                    });
+                } else {
+                    let correctionMatrix = currentMatrix.clone();
+                    let dirVec = new THREE.Vector3(1, 0, 0);
+                    let directionVector = dirVec.applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
+                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
+                    computedTransforms.push({
+                        pos: fixedPos.toArray(),
+                        quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
+                    });
+                }
 
                 // Axis 5
                 let m5 = getLinkStructureBaseMatrix(dh[4]);
@@ -424,7 +430,6 @@ def build_embedded_viewport(payload):
 
                 // Axis 6
                 let m6 = getLinkStructureBaseMatrix(dh[5]);
-                // FIX: Swap rotation mapping for Yaskawa profile from rotationX to rotationZ to line up with the mechanical frame pitch offset
                 if (data.profileName === "Yaskawa_3500") {
                     m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6]));
                 } else {
@@ -451,7 +456,6 @@ def build_embedded_viewport(payload):
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
-                    // FIX: Offset translations swap based on the physical wrist projection setup
                     if (data.profileName === "Yaskawa_3500") {
                         gunMesh.translateZ(-gunOffset);
                     } else {
@@ -544,7 +548,7 @@ def build_embedded_viewport(payload):
                 updateUIElements();
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "clear_sequence");
-                window.parent.href = targetUrl.toString();
+                window.parent.location.href = targetUrl.toString();
             });
 
             let simStepIndex = 0;
