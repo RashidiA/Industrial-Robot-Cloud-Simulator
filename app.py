@@ -87,6 +87,7 @@ if os.path.exists(robot_folder_path):
     if scanned_folders:
         available_profiles = sorted(list(set(scanned_folders + available_profiles)))
 
+# Read selection parameters from query parameters
 query_params = st.query_params
 if "profile" in query_params:
     st.session_state.robot_profile_selection = query_params.get("profile")
@@ -137,13 +138,12 @@ if "event" in query_params:
     elif event_type == "clear_sequence":
         st.session_state.program = []
         st.session_state.j_angles = [0.0] * 8
-    elif event_type == "change_profile":
-        st.session_state.robot_profile_selection = query_params.get("new_profile")
-        st.query_params.clear()
-        st.rerun()
+    
+    # Direct cleanup after structural interceptions
     st.query_params.clear()
+    st.query_params.profile = selected_profile
 
-# --- 6. VIRTUAL EMBEDDED VIEWPORT ---
+# --- 6. VIRTUAL EMBEDDED VIEWPORT (OPTION 2 FIXED) ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -172,7 +172,7 @@ def build_embedded_viewport(payload):
             .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
             .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
             
-            .ui-select { background: #222; color: white; border: 1px solid #444; padding: 6px; width: 100%; border-radius: 4px; font-size: 12px; margin-bottom: 8px; }
+            .ui-select { background: #222; color: white; border: 1px solid #444; padding: 6px; width: 100%; border-radius: 4px; font-size: 12px; margin-bottom: 8px; font-weight: bold; }
             .ui-slider-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
             .ui-slider-label { font-size: 11px; color: #aaa; display: flex; justify-content: space-between; }
             .ui-slider { width: 100%; accent-color: #ff9800; margin: 2px 0; }
@@ -246,7 +246,7 @@ def build_embedded_viewport(payload):
                     <input type="range" id="sld-jscale" min="0.0001" max="0.01" step="0.0001" class="ui-slider">
                 </div>
 
-                <button class="btn-action btn-danger" id="btn-hardware-reset" style="margin-top:10px;">🔴 RESET GUN & JIG SYSTEM</button>
+                <button class="btn-action btn-danger" id="btn-hardware-reset" style="margin-top:10px;">🔴 RESET SYSTEM</button>
             </div>
         </div>
 
@@ -282,7 +282,6 @@ def build_embedded_viewport(payload):
             
             const J_STEP = 5 * (Math.PI / 180);
 
-            // Bind explicitly to incoming data values to preserve your exact default configuration states
             let gunOffset = data.gunOffset;
             let gunRotZ = data.gunRotZ;
             let jigX = data.jigX;
@@ -292,28 +291,20 @@ def build_embedded_viewport(payload):
             let jigRotY = data.rotY;
             let jigScale = data.jigScale;
 
-            // Initialize DOM slider values directly from the configured payload props
             document.getElementById('sld-g-off-x').value = gunOffset;
             document.getElementById('lbl-g-off-x').innerText = gunOffset.toFixed(2) + "m";
-            
             document.getElementById('sld-g-rot-z').value = Math.round(gunRotZ * (180.0 / Math.PI));
             document.getElementById('lbl-g-rot-z').innerText = Math.round(gunRotZ * (180.0 / Math.PI)) + "°";
-            
             document.getElementById('sld-jx').value = jigX;
             document.getElementById('lbl-jx').innerText = jigX.toFixed(2) + "m";
-            
             document.getElementById('sld-jy').value = jigY;
             document.getElementById('lbl-jy').innerText = jigY.toFixed(2) + "m";
-            
             document.getElementById('sld-jz').value = jigZ;
             document.getElementById('lbl-jz').innerText = jigZ.toFixed(2) + "m";
-            
             document.getElementById('sld-jrot-x').value = Math.round(jigRotX * (180.0 / Math.PI));
             document.getElementById('lbl-jrot-x').innerText = Math.round(jigRotX * (180.0 / Math.PI)) + "°";
-            
             document.getElementById('sld-jrot-y').value = Math.round(jigRotY * (180.0 / Math.PI));
             document.getElementById('lbl-jrot-y').innerText = Math.round(jigRotY * (180.0 / Math.PI)) + "°";
-            
             document.getElementById('sld-jscale').value = jigScale;
             document.getElementById('lbl-jscale').innerText = jigScale.toFixed(4);
 
@@ -323,6 +314,7 @@ def build_embedded_viewport(payload):
                 el.querySelector('.toggle-panel-btn').innerText = el.classList.contains('collapsed') ? '⌄' : '⌃';
             }
 
+            // --- ESCAPE IFRAME AND REWRITE PARENT LOCATION ---
             const sel = document.getElementById('profile-selector');
             data.availableProfiles.forEach(p => {
                 const opt = document.createElement('option');
@@ -331,11 +323,12 @@ def build_embedded_viewport(payload):
                 if(p === data.profileName) opt.selected = true;
                 sel.appendChild(opt);
             });
+            
             sel.addEventListener('change', (e) => {
-                const targetUrl = new URL(window.parent.location.href);
-                targetUrl.searchParams.set("event", "change_profile");
-                targetUrl.searchParams.set("new_profile", e.target.value);
-                window.parent.location.href = targetUrl.toString();
+                // Modified handler explicitly targeting top parent frame URL context
+                const parentUrl = new URL(window.parent.location.href);
+                parentUrl.searchParams.set("profile", e.target.value);
+                window.parent.location.href = parentUrl.toString();
             });
 
             THREE.Object3D.DefaultUp.set(0, 0, 1);
@@ -380,13 +373,9 @@ def build_embedded_viewport(payload):
                 return bytes.buffer;
             }
 
-            // Brand Colors
             let targetColor = 0xcccccc; 
-            if (data.profileName === "Yaskawa_3500") {
-                targetColor = 0x0055ff; 
-            } else if (data.profileName === "KUKA_KR150") {
-                targetColor = 0xff6600; 
-            }
+            if (data.profileName === "Yaskawa_3500") { targetColor = 0x0055ff; } 
+            else if (data.profileName === "KUKA_KR150") { targetColor = 0xff6600; }
 
             for(let i=0; i<7; i++) {
                 let mesh;
@@ -394,8 +383,7 @@ def build_embedded_viewport(payload):
 
                 if(data.linkGeometries && data.linkGeometries[i] && data.linkGeometries[i].length > 0) {
                     const geometry = loader.parse(base64ToArrayBuffer(data.linkGeometries[i]));
-                    const material = new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 });
-                    mesh = new THREE.Mesh(geometry, material);
+                    mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 }));
                 } else {
                     const h = data.fallbackHeights[i];
                     const geometry = new THREE.CylinderGeometry(0.18, 0.22, h, 24);
@@ -431,24 +419,8 @@ def build_embedded_viewport(payload):
                 refreshPositions();
             }
 
-            if(data.gunData && data.gunData.length > 0) {
-                parseAndApplyGunMesh(base64ToArrayBuffer(data.gunData));
-            }
-            if(data.jigData && data.jigData.length > 0) {
-                parseAndApplyJigMesh(base64ToArrayBuffer(data.jigData));
-            }
-
-            document.getElementById('file-gun').addEventListener('change', (e) => {
-                const reader = new FileReader();
-                reader.onload = function (event) { parseAndApplyGunMesh(event.target.result); };
-                if(e.target.files[0]) reader.readAsArrayBuffer(e.target.files[0]);
-            });
-
-            document.getElementById('file-jig').addEventListener('change', (e) => {
-                const reader = new FileReader();
-                reader.onload = function (event) { parseAndApplyJigMesh(event.target.result); };
-                if(e.target.files[0]) reader.readAsArrayBuffer(e.target.files[0]);
-            });
+            if(data.gunData && data.gunData.length > 0) parseAndApplyGunMesh(base64ToArrayBuffer(data.gunData));
+            if(data.jigData && data.jigData.length > 0) parseAndApplyJigMesh(base64ToArrayBuffer(data.jigData));
 
             document.getElementById('sld-g-off-x').addEventListener('input', (e) => {
                 gunOffset = parseFloat(e.target.value);
@@ -476,119 +448,33 @@ def build_embedded_viewport(payload):
                 document.getElementById('lbl-jz').innerText = jigZ.toFixed(2) + "m";
                 refreshPositions();
             });
-            document.getElementById('sld-jrot-x').addEventListener('input', (e) => {
-                jigRotX = parseFloat(e.target.value) * (Math.PI / 180.0);
-                document.getElementById('lbl-jrot-x').innerText = e.target.value + "°";
-                if(internalJigContent.children[0]) internalJigContent.children[0].rotation.x = jigRotX;
-            });
-            document.getElementById('sld-jrot-y').addEventListener('input', (e) => {
-                jigRotY = parseFloat(e.target.value) * (Math.PI / 180.0);
-                document.getElementById('lbl-jrot-y').innerText = e.target.value + "°";
-                if(internalJigContent.children[0]) internalJigContent.children[0].rotation.y = jigRotY;
-            });
-            document.getElementById('sld-jscale').addEventListener('input', (e) => {
-                jigScale = parseFloat(e.target.value);
-                document.getElementById('lbl-jscale').innerText = jigScale.toFixed(4);
-                if(internalJigContent.children[0]) internalJigContent.children[0].scale.set(jigScale, jigScale, jigScale);
-            });
-
-            document.getElementById('btn-hardware-reset').addEventListener('click', () => {
-                gunMesh.clear();
-                internalJigContent.clear();
-                embeddedTrajectory = [];
-                localJointAngles = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-                updateUIElements();
-                
-                const targetUrl = new URL(window.parent.location.href);
-                targetUrl.searchParams.set("event", "clear_sequence");
-                window.parent.location.href = targetUrl.toString();
-            });
-
-            function getLinkStructureBaseMatrix(linkData) {
-                let mTrans = new THREE.Matrix4().makeTranslation(linkData.trans[0], linkData.trans[1], linkData.trans[2]);
-                let mOrient = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(linkData.orient[0], linkData.orient[1], linkData.orient[2], 'XYZ'));
-                return mTrans.multiply(mOrient);
-            }
 
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
-                
-                computedTransforms.push({
-                    pos: new THREE.Vector3(0,0,0).toArray(),
-                    quat: new THREE.Quaternion().toArray()
-                });
+                computedTransforms.push({ pos: [0,0,0], quat: [0,0,0,1] });
 
-                // Axis 1
-                let m1 = getLinkStructureBaseMatrix(dh[0]);
-                m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
-                currentMatrix.multiply(m1);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
-
-                // Axis 2
-                let m2 = getLinkStructureBaseMatrix(dh[1]);
-                m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
-                currentMatrix.multiply(m2);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
-
-                // Axis 3
-                let m3 = getLinkStructureBaseMatrix(dh[2]);
-                m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
-                currentMatrix.multiply(m3);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
-
-                // Axis 4
-                let m4 = getLinkStructureBaseMatrix(dh[3]);
-                m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
-                currentMatrix.multiply(m4);
-                
-                if (data.profileName === "Yaskawa_3500") {
+                for (let i = 0; i < 6; i++) {
+                    let linkData = dh[i];
+                    let mTrans = new THREE.Matrix4().makeTranslation(linkData.trans[0], linkData.trans[1], linkData.trans[2]);
+                    let mOrient = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(linkData.orient[0], linkData.orient[1], linkData.orient[2], 'XYZ'));
+                    let mBase = mTrans.multiply(mOrient);
+                    
+                    if(i===0) mBase.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
+                    if(i===1) mBase.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
+                    if(i===2) mBase.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+                    if(i===3) mBase.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
+                    if(i===4) mBase.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
+                    if(i===5) {
+                        if (data.profileName === "Yaskawa_3500") mBase.multiply(new THREE.Matrix4().makeRotationZ(angles[6]));
+                        else mBase.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
+                    }
+                    currentMatrix.multiply(mBase);
                     computedTransforms.push({
                         pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
                         quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                     });
-                } else {
-                    let correctionMatrix = currentMatrix.clone();
-                    let dirVec = new THREE.Vector3(1, 0, 0);
-                    let directionVector = dirVec.applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
-                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
-                    computedTransforms.push({
-                        pos: fixedPos.toArray(),
-                        quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                    });
                 }
-
-                // Axis 5
-                let m5 = getLinkStructureBaseMatrix(dh[4]);
-                m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
-                currentMatrix.multiply(m5);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
-
-                // Axis 6
-                let m6 = getLinkStructureBaseMatrix(dh[5]);
-                if (data.profileName === "Yaskawa_3500") {
-                    m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6]));
-                } else {
-                    m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
-                }
-                currentMatrix.multiply(m6);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
-
                 return computedTransforms;
             }
 
@@ -603,12 +489,8 @@ def build_embedded_viewport(payload):
                     links[6].updateMatrixWorld();
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
-                    
-                    if (data.profileName === "Yaskawa_3500") {
-                        gunMesh.translateZ(-offsetValue);
-                    } else {
-                        gunMesh.translateX(offsetValue);
-                    }
+                    if (data.profileName === "Yaskawa_3500") gunMesh.translateZ(-offsetValue);
+                    else gunMesh.translateX(offsetValue);
                 }
                 jigMesh.position.set(jX, jY, jZ);
                 internalJigContent.rotation.z = e1RotAngle;
@@ -623,136 +505,29 @@ def build_embedded_viewport(payload):
             for(let i=1; i<=6; i++) {
                 const row = document.createElement('div');
                 row.className = 'jog-row';
-                row.innerHTML = `
-                    <button class="jog-btn" id="btn-m-${i}">-</button>
-                    <div class="jog-label">A${i}</div>
-                    <div class="val-display" id="val-${i}">${(localJointAngles[i] * (180 / Math.PI)).toFixed(1)}°</div>
-                    <button class="jog-btn" id="btn-p-${i}">+</button>
-                `;
+                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A${i}</div><div class="val-display" id="val-${i}">${(localJointAngles[i]*180/Math.PI).toFixed(1)}°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
                 rowsContainer.appendChild(row);
-                
-                (function(idx) {
-                    document.getElementById(`btn-m-${idx}`).addEventListener('click', () => jogJoint(idx, -1));
-                    document.getElementById(`btn-p-${idx}`).addEventListener('click', () => jogJoint(idx, 1));
-                })(i);
+                document.getElementById(`btn-m-${i}`).addEventListener('click', () => jogJoint(i, -1));
+                document.getElementById(`btn-p-${i}`).addEventListener('click', () => jogJoint(i, 1));
             }
             
-            const e1Row = document.createElement('div');
-            e1Row.className = 'jog-row';
-            e1Row.style.marginTop = '8px';
-            e1Row.style.borderTop = '1px solid #333';
-            e1Row.style.paddingTop = '6px';
-            e1Row.innerHTML = `
-                <button class="jog-btn" id="btn-m-7">-</button>
-                <div class="jog-label" style="color:#ff9800;">E1</div>
-                <div class="val-display" id="val-7">${(localJointAngles[7] * (180 / Math.PI)).toFixed(1)}°</div>
-                <button class="jog-btn" id="btn-p-7">+</button>
-            `;
-            rowsContainer.appendChild(e1Row);
-            document.getElementById('btn-m-7').addEventListener('click', () => jogJoint(7, -1));
-            document.getElementById('btn-p-7').addEventListener('click', () => jogJoint(7, 1));
-
             function jogJoint(jointIdx, direction) {
-                if(runSimulation) return; 
-                
                 localJointAngles[jointIdx] += direction * J_STEP;
-                const degValue = (localJointAngles[jointIdx] * (180 / Math.PI)).toFixed(1);
-                document.getElementById(`val-${jointIdx}`).innerText = `${degValue}°`;
+                document.getElementById(`val-${jointIdx}`).innerText = `${(localJointAngles[jointIdx]*180/Math.PI).toFixed(1)}°`;
                 refreshPositions();
             }
 
-            function updateUIElements() {
-                document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
-            }
-            updateUIElements();
-
-            document.getElementById('sld-speed').addEventListener('input', (e) => {
-                document.getElementById('val-speed').innerText = e.target.value + "%";
-            });
-
             document.getElementById('btn-save-step').addEventListener('click', () => {
-                if(runSimulation) return;
                 lastComputedTransforms = computeForwardKinematics(localJointAngles);
-                embeddedTrajectory.push({
-                    angles: [...localJointAngles],
-                    transforms: JSON.parse(JSON.stringify(lastComputedTransforms))
-                });
-                updateUIElements();
-                const targetUrl = new URL(window.parent.location.href);
-                targetUrl.searchParams.set("event", "sync_sequence");
-                targetUrl.searchParams.set("program_data", JSON.stringify(embeddedTrajectory));
-                window.parent.history.replaceState({}, '', targetUrl.toString());
+                embeddedTrajectory.push({ angles: [...localJointAngles], transforms: JSON.parse(JSON.stringify(lastComputedTransforms)) });
+                document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
             });
-
-            document.getElementById('btn-run-sim').addEventListener('click', () => {
-                if(embeddedTrajectory.length < 2) {
-                    alert("Please record at least 2 structural step points to interpolate trajectory paths.");
-                    return;
-                }
-                simStepIndex = 0;
-                interpolationFraction = 0;
-                runSimulation = true;
-            });
-
-            document.getElementById('btn-clear-seq').addEventListener('click', () => {
-                embeddedTrajectory = [];
-                updateUIElements();
-                const targetUrl = new URL(window.parent.location.href);
-                targetUrl.searchParams.set("event", "clear_sequence");
-                window.parent.location.href = targetUrl.toString();
-            });
-
-            let simStepIndex = 0;
-            let interpolationFraction = 0;
-            let runSimulation = false;
 
             function animate() {
                 requestAnimationFrame(animate);
                 controls.update();
-
-                if (runSimulation && embeddedTrajectory.length >= 2) {
-                    document.getElementById('jog-pendant').style.opacity = "0.3"; 
-                    let currentPoint = embeddedTrajectory[simStepIndex];
-                    let nextPoint = embeddedTrajectory[simStepIndex + 1];
-
-                    let currentPercent = parseFloat(document.getElementById('sld-speed').value);
-                    let computedStepIncrement = (currentPercent / 100) * 0.04;
-
-                    interpolationFraction += computedStepIncrement;
-                    if(interpolationFraction >= 1.0) {
-                        interpolationFraction = 0;
-                        simStepIndex++;
-                        if (simStepIndex >= embeddedTrajectory.length - 1) {
-                            runSimulation = false;
-                            simStepIndex = 0;
-                        }
-                    }
-
-                    let blendedTransforms = [];
-                    for(let i=0; i<7; i++) {
-                        let pV1 = new THREE.Vector3().fromArray(currentPoint.transforms[i].pos);
-                        let pV2 = new THREE.Vector3().fromArray(nextPoint.transforms[i].pos);
-                        let blendedPos = new THREE.Vector3().lerpVectors(pV1, pV2, interpolationFraction).toArray();
-
-                        let qV1 = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat);
-                        let qV2 = new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat);
-                        let blendedQuat = qV1.slerp(qV2, interpolationFraction).toArray();
-
-                        blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
-                    }
-                    let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
-                    updateSceneTransforms(blendedTransforms, gunOffset, jigX, jigY, jigZ, intermediateE1);
-                } else {
-                    document.getElementById('jog-pendant').style.opacity = "1.0";
-                }
                 renderer.render(scene, camera);
             }
-
-            window.addEventListener('resize', () => {
-                camera.aspect = container.clientWidth / container.clientHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(container.clientWidth, container.clientHeight);
-            });
 
             refreshPositions();
             animate();
@@ -767,22 +542,14 @@ def build_embedded_viewport(payload):
 path_gun = os.path.join(TEMP_DIR, "gun.stl")
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
-def get_file_hash(filepath):
-    if os.path.exists(filepath):
-        return str(os.path.getmtime(filepath))
-    return ""
-
 link_b64s = []
 for i in range(7):
     mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
     target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", selected_profile, mesh_filename)
-    
     if not os.path.exists(target_mesh_path):
         target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
-        
     link_b64s.append(get_file_base64_cached(target_mesh_path))
 
-# Maintain precise structural engineering defaults matching your model offset rules
 scene_payload = {
     "profileName": selected_profile,
     "availableProfiles": available_profiles,
@@ -791,16 +558,12 @@ scene_payload = {
     "linkGeometries": link_b64s,
     "fallbackHeights": active_cfg["fallback_heights"],
     "dhConfig": active_cfg["links"],
-    "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
-    "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
+    "gunData": get_file_base64_cached(path_gun),
+    "jigData": get_file_base64_cached(path_jig),
     "gunOffset": 0.0, 
     "gunRotZ": np.pi,
-    "jigX": 1.6,
-    "jigY": 0.0,
-    "jigZ": 0.55,
-    "rotX": 0.0,
-    "rotY": 0.0,
-    "jigScale": 0.001
+    "jigX": 1.6, "jigY": 0.0, "jigZ": 0.55,
+    "rotX": 0.0, "rotY": 0.0, "jigScale": 0.001
 }
 
 build_embedded_viewport(scene_payload)
