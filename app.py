@@ -21,7 +21,6 @@ if 'program' not in st.session_state:
     st.session_state.program = []
 
 # --- 2. MULTI-ROBOT KINEMATICS REGISTRY ---
-# Key updated to match folder name "Yaskawa_3500" for seamless directory binding
 ROBOT_REGISTRY = {
     "ABB_6700": {
         "links": [
@@ -71,10 +70,10 @@ ROBOT_REGISTRY = {
         "links": [
             {"name": "A1", "trans": [0.0, 0.0, 0.50],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
             {"name": "A2", "trans": [0.16, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A3", "trans": [0.0, 0.0, 0.9],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [1.0, 0.0, 0.2],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [0.0, 0.0, 0.0],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
-            {"name": "A6", "trans": [0.0, 0.0, -0.17],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A3", "trans": [0.0, 0.0, 0.9],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [1.0, 0.0, 0.2],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.0, 0.0, 0.0],    "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
+            {"name": "A6", "trans": [0.0, 0.0, -0.17],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.70, 0.45, 1.15, 0.35, 0.18, 0.18, 0.10]
     }
@@ -404,7 +403,9 @@ def build_embedded_viewport(payload):
                 currentMatrix.multiply(m4);
                 
                 let correctionMatrix = currentMatrix.clone();
-                let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
+                // FIX: Swap projection vector to align with the downward oriented translation of Yaskawa configuration
+                let dirVec = (data.profileName === "Yaskawa_3500") ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(1, 0, 0);
+                let directionVector = dirVec.applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
                 let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
                 
                 computedTransforms.push({
@@ -423,7 +424,12 @@ def build_embedded_viewport(payload):
 
                 // Axis 6
                 let m6 = getLinkStructureBaseMatrix(dh[5]);
-                m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
+                // FIX: Swap rotation mapping for Yaskawa profile from rotationX to rotationZ to line up with the mechanical frame pitch offset
+                if (data.profileName === "Yaskawa_3500") {
+                    m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6]));
+                } else {
+                    m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
+                }
                 currentMatrix.multiply(m6);
                 computedTransforms.push({
                     pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
@@ -444,7 +450,13 @@ def build_embedded_viewport(payload):
                     links[6].updateMatrixWorld();
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
-                    gunMesh.translateX(gunOffset);
+                    
+                    // FIX: Offset translations swap based on the physical wrist projection setup
+                    if (data.profileName === "Yaskawa_3500") {
+                        gunMesh.translateZ(-gunOffset);
+                    } else {
+                        gunMesh.translateX(gunOffset);
+                    }
                 }
                 jigMesh.position.set(jigX, jigY, jigZ);
                 internalJigContent.rotation.z = e1RotAngle;
@@ -532,7 +544,7 @@ def build_embedded_viewport(payload):
                 updateUIElements();
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "clear_sequence");
-                window.parent.location.href = targetUrl.toString();
+                window.parent.href = targetUrl.toString();
             });
 
             let simStepIndex = 0;
@@ -614,6 +626,7 @@ for i in range(7):
     link_b64s.append(get_file_base64_cached(target_mesh_path))
 
 scene_payload = {
+    "profileName": selected_profile,
     "trajectory": st.session_state.program,
     "initialAngles": st.session_state.j_angles,
     "linkGeometries": link_b64s,
