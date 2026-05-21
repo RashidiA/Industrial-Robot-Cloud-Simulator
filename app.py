@@ -71,8 +71,8 @@ ROBOT_REGISTRY = {
             {"name": "A1", "trans": [0.0, 0.0, 0.50],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
             {"name": "A2", "trans": [0.16, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [0.0, 0.0, 0.9],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [0.0, 0.0, 0.21],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [1.0, 0.0, 0.0],    "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [1.0, 0.0, 0.2],    "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.0, 0.0, 0.0],    "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A6", "trans": [0.0, 0.0, -0.17],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.70, 0.45, 1.15, 0.35, 0.18, 0.18, 0.10]
@@ -316,20 +316,29 @@ def build_embedded_viewport(payload):
                 return bytes.buffer;
             }
 
-            const linkColors = [0x222222, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214, 0xecb214];
+            // --- COLOR ASSIGNMENT LOGIC ---
+            let targetColor = 0xcccccc; // Default light grey for ABB models
+            if (data.profileName === "Yaskawa_3500") {
+                targetColor = 0x0055ff; // Blue
+            } else if (data.profileName === "KUKA_KR150") {
+                targetColor = 0xff6600; // Orange
+            }
 
             for(let i=0; i<7; i++) {
                 let mesh;
+                // Base Link (Index 0) stays dark grey; moving components get the profile target color
+                let currentLinkColor = (i === 0) ? 0x222222 : targetColor;
+
                 if(data.linkGeometries && data.linkGeometries[i] && data.linkGeometries[i].length > 0) {
                     const geometry = loader.parse(base64ToArrayBuffer(data.linkGeometries[i]));
-                    const material = new THREE.MeshStandardMaterial({ color: linkColors[i], roughness: 0.4 });
+                    const material = new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 });
                     mesh = new THREE.Mesh(geometry, material);
                 } else {
                     const h = data.fallbackHeights[i];
                     const geometry = new THREE.CylinderGeometry(0.18, 0.22, h, 24);
                     geometry.rotateX(Math.PI / 2); 
                     if(i === 1 || i === 2 || i === 3) { geometry.translate(0, 0, h / 2); }
-                    mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: linkColors[i], roughness: 0.4 }));
+                    mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 }));
                 }
                 scene.add(mesh);
                 links.push(mesh);
@@ -402,7 +411,6 @@ def build_embedded_viewport(payload):
                 m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
                 
-                // FIX: If Yaskawa, bypass the hardcoded ABB vector translation subtraction that causes Axis 4's massive radius detachment.
                 if (data.profileName === "Yaskawa_3500") {
                     computedTransforms.push({
                         pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
