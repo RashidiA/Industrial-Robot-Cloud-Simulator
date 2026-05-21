@@ -10,9 +10,7 @@ Watch the simulation workflow in real-time, showcasing multi-robot profile loadi
 
 <g-emoji class="g-emoji" alias="arrow_forward" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/25b6.png">▶️</g-emoji> **Click to preview execution setup below:**
 
-https://github.com/user-attachments/assets/YOUR_UPLOADED_VIDE
-
-O_GUID_HERE
+https://github.com/user-attachments/assets/Simulasi Robot ABB Welding.mp4
 
 > 💡 **Tip:** To embed your own recording on GitHub, simply edit this `README.md` on the GitHub website and **drag-and-drop** your `.mp4` or `.mov` file directly into the markdown code window. GitHub will host it securely and generate the play link automatically!
 
