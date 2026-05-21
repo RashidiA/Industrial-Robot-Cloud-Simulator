@@ -79,22 +79,27 @@ ROBOT_REGISTRY = {
     }
 }
 
-# --- 3. HARDWARE PROFILE INITIALIZATION LAYER ---
-robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
+# --- 3. MINIMIZABLE STREAMLIT SIDEBAR CONTROLS ---
 available_profiles = list(ROBOT_REGISTRY.keys())
-if os.path.exists(robot_folder_path):
-    scanned_folders = [f for f in os.listdir(robot_folder_path) if os.path.isdir(os.path.join(robot_folder_path, f))]
-    if scanned_folders:
-        available_profiles = sorted(list(set(scanned_folders + available_profiles)))
+if os.path.exists(os.path.join(BASE_DIR, "assets", "robots")):
+    scanned = [f for f in os.listdir(os.path.join(BASE_DIR, "assets", "robots")) if os.path.isdir(os.path.join(BASE_DIR, "assets", "robots", f))]
+    if scanned:
+        available_profiles = sorted(list(set(scanned + available_profiles)))
 
-# Read custom parameters securely from query parameters
-query_params = st.query_params
-if "profile" in query_params:
-    st.session_state.robot_profile_selection = query_params.get("profile")
-
-selected_profile = st.session_state.get("robot_profile_selection", "ABB_6700")
-if selected_profile not in available_profiles:
-    selected_profile = available_profiles[0]
+with st.sidebar:
+    st.markdown("### ⚙️ MINIMIZABLE HARDWARE CONTROLS")
+    st.info("💡 Click the arrow icon at the top-left of this sidebar to collapse it and get full widescreen WebGL space!")
+    
+    # 100% Streamlit dropdown selection layer
+    selected_profile = st.selectbox(
+        "Select Active Robot Profile",
+        options=available_profiles,
+        index=available_profiles.index("ABB_6700") if "ABB_6700" in available_profiles else 0,
+        key="robot_profile_selection"
+    )
+    
+    st.markdown("---")
+    st.markdown("🔒 *Offsets & Scale locked down strictly below your viewport*")
 
 active_cfg = ROBOT_REGISTRY.get(selected_profile, ROBOT_REGISTRY["ABB_6700"])
 
@@ -124,25 +129,7 @@ def get_file_base64_cached(filepath, file_hash=""):
             return ""
     return ""
 
-# --- 5. EVENT PARAMETER INTERCEPT LAYER ---
-if "event" in query_params:
-    event_type = query_params.get("event")
-    if event_type == "sync_sequence":
-        try:
-            raw_program = json.loads(query_params.get("program_data", "[]"))
-            st.session_state.program = raw_program
-            if len(raw_program) > 0:
-                st.session_state.j_angles = raw_program[-1]["angles"]
-        except Exception:
-            pass
-    elif event_type == "clear_sequence":
-        st.session_state.program = []
-        st.session_state.j_angles = [0.0] * 8
-    
-    st.query_params.clear()
-    st.query_params.profile = selected_profile
-
-# --- 6. VIRTUAL EMBEDDED VIEWPORT (WITH LOAD ROBOT BUTTON) ---
+# --- 5. VIRTUAL EMBEDDED WIDESCREEN VIEWPORT ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -171,7 +158,6 @@ def build_embedded_viewport(payload):
             .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
             .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
             
-            .ui-select { background: #222; color: white; border: 1px solid #444; padding: 6px; width: 100%; border-radius: 4px; font-size: 12px; margin-bottom: 4px; font-weight: bold; }
             .ui-slider-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
             .ui-slider-label { font-size: 11px; color: #aaa; display: flex; justify-content: space-between; }
             .ui-slider { width: 100%; accent-color: #ff9800; margin: 2px 0; }
@@ -187,10 +173,6 @@ def build_embedded_viewport(payload):
             #btn-run-sim { background: #4caf50; color: white; }
             #btn-clear-seq { background: #f44336; color: white; }
             
-            /* High visibility design for profile switching action button */
-            #btn-load-robot { background: #00ffcc; color: #111; margin-bottom: 12px; transition: background 0.2s; }
-            #btn-load-robot:hover { background: #00b399; }
-            
             .toggle-panel-btn { background: none; border: none; color: #ff9800; cursor: pointer; font-size: 14px; padding: 0 5px; }
             .collapsed { height: 18px !important; overflow: hidden; padding-bottom: 0 !important; width: 180px !important; }
         </style>
@@ -198,14 +180,10 @@ def build_embedded_viewport(payload):
     <body>
         <div id="hardware-panel" class="control-panel">
             <div class="panel-header">
-                <span>⚙️ HARDWARE SETUP</span>
+                <span>🛠️ SETTINGS & GUN TOOLING</span>
                 <button class="toggle-panel-btn" onclick="togglePanel('hardware-panel')">⌃</button>
             </div>
             <div class="panel-content">
-                <label class="ui-slider-label"><span style="color:#ff9800; font-weight:bold;">Select Robot Profile</span></label>
-                <select id="profile-selector" class="ui-select"></select>
-                <button class="btn-action" id="btn-load-robot">🤖 LOAD SELECTED ROBOT</button>
-                
                 <div class="section-title">🔫 Tooling (Welding Gun)</div>
                 <div class="file-upload-btn">
                     <span>📁 Load Gun STL File</span>
@@ -286,7 +264,7 @@ def build_embedded_viewport(payload):
             
             const J_STEP = 5 * (Math.PI / 180);
 
-            // STABLE OFFSETS - PREVENTS DISPLACEMENT AND DETACHMENT FLIPS
+            // STRICT GEOMETRIC PROPERTY BINDING - LOCKS BASES FROM DETACHING
             let gunOffset = data.gunOffset;
             let gunRotZ = data.gunRotZ;
             let jigX = data.jigX;
@@ -318,23 +296,6 @@ def build_embedded_viewport(payload):
                 el.classList.toggle('collapsed');
                 el.querySelector('.toggle-panel-btn').innerText = el.classList.contains('collapsed') ? '⌄' : '⌃';
             }
-
-            // POPULATE CHANNELS EXPLICITLY
-            const sel = document.getElementById('profile-selector');
-            data.availableProfiles.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p;
-                opt.innerText = p;
-                if(p === data.profileName) opt.selected = true;
-                sel.appendChild(opt);
-            });
-            
-            // "LOAD SELECTED ROBOT" BUTTON TRIGGER CLICK EVENT
-            document.getElementById('btn-load-robot').addEventListener('click', () => {
-                const parentUrl = new URL(window.parent.location.href);
-                parentUrl.searchParams.set("profile", sel.value);
-                window.parent.location.href = parentUrl.toString();
-            });
 
             THREE.Object3D.DefaultUp.set(0, 0, 1);
             const container = document.getElementById('canvas-container');
@@ -543,7 +504,7 @@ def build_embedded_viewport(payload):
     
     components.html(html_source, height=780, scrolling=False)
 
-# --- 7. DYNAMIC HARDWARE FILE BINDING LAYER ---
+# --- 6. DYNAMIC HARDWARE FILE BINDING LAYER ---
 path_gun = os.path.join(TEMP_DIR, "gun.stl")
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
@@ -557,7 +518,6 @@ for i in range(7):
 
 scene_payload = {
     "profileName": selected_profile,
-    "availableProfiles": available_profiles,
     "trajectory": st.session_state.program,
     "initialAngles": st.session_state.j_angles,
     "linkGeometries": link_b64s,
