@@ -825,4 +825,34 @@ path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
 link_b64s = []
 for i in range(7):
-    mesh_filename = f"link_{i}.stl
+    mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
+    target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", selected_profile, mesh_filename)
+    
+    if not os.path.exists(target_mesh_path):
+        target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
+        
+    link_b64s.append(get_file_base64_cached(target_mesh_path))
+
+scene_payload = {
+    "profileName": selected_profile,
+    "trajectory": st.session_state.program,
+    "initialAngles": st.session_state.j_angles,
+    "linkGeometries": link_b64s,
+    "fallbackHeights": active_cfg["fallback_heights"],
+    "dhConfig": active_cfg["links"],
+    "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
+    "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
+    "gunOffsetX": g_off_x,
+    "gunOffsetY": g_off_y,
+    "gunOffsetZ": g_off_z,
+    "gunRotY": float(g_rot_y) * (np.pi / 180.0),
+    "gunRotZ": float(g_rot_z) * (np.pi / 180.0),
+    "jigX": jx_pos,
+    "jigY": jy_pos,
+    "jigZ": jz_pos,
+    "rotX": float(j_rot_x) * (np.pi / 180.0),
+    "rotY": float(j_rot_y) * (np.pi / 180.0),
+    "jigScale": js_scale
+}
+
+build_embedded_viewport(scene_payload)
