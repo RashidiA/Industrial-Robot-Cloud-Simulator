@@ -199,7 +199,7 @@ if 'j_rot_x' not in locals(): j_rot_x = 0
 if 'j_rot_y' not in locals(): j_rot_y = 0
 if 'js_scale' not in locals(): js_scale = 0.001
 
-# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT WITH INTERNAL IK SOLVER ---
+# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT WITH INTERACTIVE GIZMO ARROWS ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -266,10 +266,10 @@ def build_embedded_viewport(payload):
             let localJointAngles = [...data.initialAngles];
             let lastComputedTransforms = [];
             let embeddedTrajectory = [...data.trajectory];
-            let activeMode = 'joint'; // 'joint' or 'tcp'
+            let activeMode = 'joint'; 
             
-            const J_STEP = 3 * (Math.PI / 180); // Radian step
-            const L_STEP = 0.02; // Cartesian XYZ step (20mm)
+            const J_STEP = 3 * (Math.PI / 180); 
+            const L_STEP = 0.02; 
 
             THREE.Object3D.DefaultUp.set(0, 0, 1);
             const container = document.getElementById('canvas-container');
@@ -304,6 +304,103 @@ def build_embedded_viewport(payload):
             scene.add(gunMesh);
             jigMesh.add(internalJigContent);
             scene.add(jigMesh);
+
+            // --- ROBODK STYLE GIZMO ACCELERATION STACK ---
+            const gizmoGroup = new THREE.Group();
+            scene.add(gizmoGroup);
+
+            // Base color variables
+            const colorX = 0xff3333; // Red
+            const colorY = 0x33cc33; // Green
+            const colorZ = 0x3333ff; // Blue
+            const colorHover = 0xffff00; // Yellow Highlight
+
+            function createGizmoArrow(dir, color, axisName) {
+                const arrowGroup = new THREE.Group();
+                arrowGroup.userData = { axis: axisName, baseColor: color };
+
+                // Shaft
+                const shaftGeom = new THREE.CylinderGeometry(0.012, 0.012, 0.35, 8);
+                shaftGeom.translate(0, 0.175, 0); 
+                shaftGeom.rotateX(Math.PI / 2); 
+                const shaftMat = new THREE.MeshBasicMaterial({ color: color, depthTest: false, depthWrite: false });
+                const shaft = new THREE.Mesh(shaftGeom, shaftMat);
+                shaft.renderOrder = 999;
+                arrowGroup.add(shaft);
+
+                // Cone tip
+                const coneGeom = new THREE.ConeGeometry(0.035, 0.09, 12);
+                coneGeom.translate(0, 0.35 + 0.045, 0);
+                coneGeom.rotateX(Math.PI / 2);
+                const coneMat = new THREE.MeshBasicMaterial({ color: color, depthTest: false, depthWrite: false });
+                const cone = new THREE.Mesh(coneGeom, coneMat);
+                cone.renderOrder = 999;
+                arrowGroup.add(cone);
+
+                // Reorient standard up-pointing vectors directly toward target directions
+                if (dir.x > 0.9) arrowGroup.rotation.y = Math.PI / 2;
+                else if (dir.x < -0.9) arrowGroup.rotation.y = -Math.PI / 2;
+                else if (dir.y > 0.9) arrowGroup.rotation.x = -Math.PI / 2;
+                else if (dir.y < -0.9) arrowGroup.rotation.x = Math.PI / 2;
+                else if (dir.z < -0.9) arrowGroup.rotation.x = Math.PI;
+
+                gizmoGroup.add(arrowGroup);
+                return arrowGroup;
+            }
+
+            const arrowX = createGizmoArrow(new THREE.Vector3(1, 0, 0), colorX, 'X');
+            const arrowY = createGizmoArrow(new THREE.Vector3(0, 1, 0), colorY, 'Y');
+            const arrowZ = createGizmoArrow(new THREE.Vector3(0, 0, 1), colorZ, 'Z');
+
+            // Raycasting cursor interaction
+            const raycaster = new THREE.Raycaster();
+            const mouseVec = new THREE.Vector2();
+            let hoveredAxisMesh = null;
+
+            window.addEventListener('mousemove', (e) => {
+                const rect = renderer.domElement.getBoundingClientRect();
+                mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                mouseVec.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+                raycaster.setFromCamera(mouseVec, camera);
+                const intersects = raycaster.intersectObjects(gizmoGroup.children, true);
+
+                if (intersects.length > 0 && activeMode === 'tcp' && !runSimulation) {
+                    let parentGroup = intersects[0].object.parent;
+                    if (hoveredAxisMesh !== parentGroup) {
+                        resetGizmoColors();
+                        hoveredAxisMesh = parentGroup;
+                        parentGroup.children.forEach(child => child.material.color.setHex(colorHover));
+                        document.body.style.cursor = 'pointer';
+                    }
+                } else {
+                    if (hoveredAxisMesh) {
+                        resetGizmoColors();
+                        hoveredAxisMesh = null;
+                        document.body.style.cursor = 'default';
+                    }
+                }
+            });
+
+            // Trigger click step on matching hover arrow axes
+            window.addEventListener('click', () => {
+                if (hoveredAxisMesh && activeMode === 'tcp' && !runSimulation) {
+                    const axis = hoveredAxisMesh.userData.axis;
+                    // Determine look target vector to decide positive or negative step orientation safely
+                    const cameraDir = new THREE.Vector3();
+                    camera.getWorldDirection(cameraDir);
+                    const dot = (axis === 'X') ? cameraDir.x : (axis === 'Y' ? cameraDir.y : cameraDir.z);
+                    const targetDirectionSign = (dot > 0) ? -1 : 1; 
+                    
+                    window.jogCartesian(axis, targetDirectionSign);
+                }
+            });
+
+            function resetGizmoColors() {
+                gizmoGroup.children.forEach(arrow => {
+                    arrow.children.forEach(child => child.material.color.setHex(arrow.userData.baseColor));
+                });
+            }
 
             function base64ToArrayBuffer(base64Str) {
                 const binaryString = window.atob(base64Str);
@@ -362,7 +459,6 @@ def build_embedded_viewport(payload):
                 return mTrans.multiply(mOrient);
             }
 
-            // --- FORWARD KINEMATICS ENGINE ---
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
@@ -372,7 +468,6 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().toArray()
                 });
 
-                // Axis 1
                 let m1 = getLinkStructureBaseMatrix(dh[0]);
                 m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
                 currentMatrix.multiply(m1);
@@ -381,7 +476,6 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 2
                 let m2 = getLinkStructureBaseMatrix(dh[1]);
                 m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
                 currentMatrix.multiply(m2);
@@ -390,7 +484,6 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 3
                 let m3 = getLinkStructureBaseMatrix(dh[2]);
                 m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
                 currentMatrix.multiply(m3);
@@ -399,7 +492,6 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 4
                 let m4 = getLinkStructureBaseMatrix(dh[3]);
                 m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
@@ -420,7 +512,6 @@ def build_embedded_viewport(payload):
                     });
                 }
 
-                // Axis 5
                 let m5 = getLinkStructureBaseMatrix(dh[4]);
                 m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                 currentMatrix.multiply(m5);
@@ -429,7 +520,6 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
-                // Axis 6
                 let m6 = getLinkStructureBaseMatrix(dh[5]);
                 if (data.profileName === "Yaskawa_3500") {
                     m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6]));
@@ -445,7 +535,6 @@ def build_embedded_viewport(payload):
                 return computedTransforms;
             }
 
-            // --- CALCULATE TRUE CURRENT TCP POSITION ---
             function getTcpWorldPosition(transforms) {
                 let wristMatrix = new THREE.Matrix4().compose(
                     new THREE.Vector3().fromArray(transforms[6].pos),
@@ -461,7 +550,6 @@ def build_embedded_viewport(payload):
                 return tcpPos;
             }
 
-            // --- DYNAMIC NUMERICAL JAC-BASED CLIENT-SIDE INVERSE KINEMATICS ---
             function solveIKDelta(targetGlobalTcp) {
                 let currentAngles = [...localJointAngles];
                 let maxIterations = 15;
@@ -475,7 +563,6 @@ def build_embedded_viewport(payload):
                     let errorVec = new THREE.Vector3().subVectors(targetGlobalTcp, currentGlobalTcp);
                     if (errorVec.length() < convergenceTolerance) break;
 
-                    // Numeric Jacobian construction for translation elements
                     let jacobian = [];
                     for (let j = 1; j <= 6; j++) {
                         let deltaAngles = [...currentAngles];
@@ -489,7 +576,6 @@ def build_embedded_viewport(payload):
                         jacobian.push([partialDeriv.x, partialDeriv.y, partialDeriv.z]);
                     }
 
-                    // Pseudo-inverse multiplication step with damping optimization
                     for (let j = 0; j < 6; j++) {
                         let dotProd = jacobian[j][0]*errorVec.x + jacobian[j][1]*errorVec.y + jacobian[j][2]*errorVec.z;
                         currentAngles[j + 1] += dotProd * dampFactor;
@@ -515,32 +601,31 @@ def build_embedded_viewport(payload):
                     } else {
                         gunMesh.translateX(gunOffset);
                     }
+
+                    // Dynamically position the RoboDK Gizmo group center right at the active tool center point
+                    let currentTcp = getTcpWorldPosition(transforms);
+                    gizmoGroup.position.copy(currentTcp);
                 }
                 jigMesh.position.set(jigX, jigY, jigZ);
                 internalJigContent.rotation.z = e1RotAngle;
             }
 
-            // --- CRITICAL SAFETY BOUNDARY PROTECTION LAYER (Z >= 0 Enforcer) ---
             function validateAndCommitMovement(candidateAngles) {
-                // 1. Perform tentative forward kinematics projection run
                 let projectedTransforms = computeForwardKinematics(candidateAngles);
                 
-                // 2. Loop across every link base center to confirm it does not drop below 0
                 for (let i = 0; i < projectedTransforms.length; i++) {
                     if (projectedTransforms[i].pos[2] < -0.001) {
                         triggerSafetyViolationUI();
-                        return false; // REJECT MOVE
+                        return false; 
                     }
                 }
 
-                // 3. Confirm target physical TCP location stays completely safe from ground level
                 let projectedTcp = getTcpWorldPosition(projectedTransforms);
                 if (projectedTcp.z < -0.001) {
                     triggerSafetyViolationUI();
-                    return false; // REJECT MOVE
+                    return false; 
                 }
 
-                // 4. Everything is verified safe, commit transformation state update
                 localJointAngles = candidateAngles;
                 lastComputedTransforms = projectedTransforms;
                 updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
@@ -560,12 +645,12 @@ def build_embedded_viewport(payload):
                 }, 1800);
             }
 
-            // --- RENDERING DYNAMIC PENDANT INTERFACE CONTROL SCHEMES ---
             function drawPendantInterface() {
                 const panel = document.getElementById('jog-panel-container');
                 panel.innerHTML = '';
                 
                 if (activeMode === 'joint') {
+                    gizmoGroup.visible = false; // Hide tracking arrows in joint mode
                     for(let i=1; i<=6; i++) {
                         const row = document.createElement('div');
                         row.className = 'jog-row';
@@ -578,6 +663,7 @@ def build_embedded_viewport(payload):
                         panel.appendChild(row);
                     }
                 } else {
+                    gizmoGroup.visible = true; // Make RoboDK arrows visible
                     const axLabels = ['X', 'Y', 'Z'];
                     axLabels.forEach((axis, idx) => {
                         const row = document.createElement('div');
@@ -592,7 +678,6 @@ def build_embedded_viewport(payload):
                     });
                 }
 
-                // Append external jig rail E1 tracker row
                 const e1Row = document.createElement('div');
                 e1Row.className = 'jog-row';
                 e1Row.style.marginTop = '6px';
@@ -625,7 +710,6 @@ def build_embedded_viewport(payload):
                 if(e1Elem) e1Elem.innerText = (localJointAngles[7] * (180 / Math.PI)).toFixed(1) + "°";
             }
 
-            // --- ACTION HANDLERS ---
             window.jogJoint = function(jointIdx, direction) {
                 if(runSimulation) return;
                 let candidate = [...localJointAngles];
@@ -636,26 +720,19 @@ def build_embedded_viewport(payload):
             window.jogCartesian = function(axis, direction) {
                 if(runSimulation) return;
                 
-                // 1. Map out existing tool location space parameters
                 let currentTransforms = computeForwardKinematics(localJointAngles);
                 let targetTcp = getTcpWorldPosition(currentTransforms);
                 
-                // 2. Extrapolate requested Cartesian delta adjustments
                 if(axis === 'X') targetTcp.x += direction * L_STEP;
                 if(axis === 'Y') targetTcp.y += direction * L_STEP;
                 if(axis === 'Z') targetTcp.z += direction * L_STEP;
                 
-                // 3. Solve numeric Jacobian IK to produce joint angular arrays
                 let candidateAngles = solveIKDelta(targetTcp);
-                
-                // Retain track position unchanged across tool configurations
                 candidateAngles[7] = localJointAngles[7]; 
                 
-                // 4. Pass output array through the unified Z safety filter layer
                 validateAndCommitMovement(candidateAngles);
             };
 
-            // Setup mode shift logic loops
             document.getElementById('mode-joint').addEventListener('click', () => {
                 activeMode = 'joint';
                 document.getElementById('mode-joint').className = 'mode-btn active';
@@ -715,6 +792,7 @@ def build_embedded_viewport(payload):
                 controls.update();
 
                 if (runSimulation && embeddedTrajectory.length >= 2) {
+                    gizmoGroup.visible = false; // Hide during auto playback
                     document.getElementById('jog-pendant').style.opacity = "0.3"; 
                     document.getElementById('status').innerText = "Status: Running Sequence Simulation";
                     let currentPoint = embeddedTrajectory[simStepIndex];
@@ -750,6 +828,7 @@ def build_embedded_viewport(payload):
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
                     document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
+                    if (activeMode === 'tcp') gizmoGroup.visible = true;
                 }
                 renderer.render(scene, camera);
             }
@@ -760,7 +839,6 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // Initial Draw and Setup Execution Pass
             lastComputedTransforms = computeForwardKinematics(localJointAngles);
             updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
             drawPendantInterface();
