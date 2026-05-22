@@ -178,7 +178,7 @@ with st.sidebar:
             
         st.divider()
         st.write("**🔫 Robot Tooling**")
-        up_gun = st.file_uploader("Upload Gun STL", type=["stl"], key="gun_up")
+        up_gun = st.file_uploader("Upload Tool STL", type=["stl"], key="gun_up")
         if up_gun:
             with open(os.path.join(TEMP_DIR, "gun.stl"), "wb") as f: 
                 f.write(up_gun.getbuffer())
