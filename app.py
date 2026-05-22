@@ -109,11 +109,25 @@ def build_robot_chain(profile_name, hardware_config):
         URDFLink(name=links_data[1]["name"], origin_translation=links_data[1]["trans"], origin_orientation=links_data[1]["orient"], rotation=links_data[1]["rot"]),
         URDFLink(name=links_data[2]["name"], origin_translation=links_data[2]["trans"], origin_orientation=links_data[2]["orient"], rotation=links_data[2]["rot"]),
         URDFLink(name=links_data[3]["name"], origin_translation=links_data[3]["trans"], origin_orientation=links_data[3]["orient"], rotation=links_data[3]["rot"]),
-        URDFLink(name=links_data[4]["name"], origin_translation=links_data[4]["trans"], origin_orientation=links_data[4]["orient"], rotation=links_data[4]["rot"]),
-        URDFLink(name=links_data[5]["name"], origin_translation=links_data[5]["trans"], origin_orientation=links_data[5]["orient"], rotation=links_data[5]["rot"]),
+        URDFLink(name=links_data[4]["name"], origin_translation=links_data[4]["trans"], origin_orientation=links_data[4]["orient"], rotation=hardware_config["links"][4]["rot"]),
+        URDFLink(name=links_data[5]["name"], origin_translation=links_data[5]["trans"], origin_orientation=links_data[5]["orient"], rotation=hardware_config["links"][5]["rot"]),
     ], active_links_mask=[False, True, True, True, True, True, True])
 
 robot_chain = build_robot_chain(selected_profile, active_cfg)
+
+def get_link_transforms(angles):
+    matrices = robot_chain.forward_kinematics(angles[:7], full_kinematics=True)
+    transforms = []
+    for i, m in enumerate(matrices):
+        pos_val = m[:3, 3].tolist()
+        if i == 4:
+            m_corr = m.copy()
+            m_corr[:3, 3] += m_corr[:3, 0] * -1.0
+            pos_val = m_corr[:3, 3].tolist()
+        rot_matrix = m[:3, :3]
+        quat = R.from_matrix(rot_matrix).as_quat().tolist()
+        transforms.append({"pos": pos_val, "quat": quat})
+    return transforms
 
 @st.cache_data(show_spinner=False)
 def get_file_base64_cached(filepath, file_hash=""):
@@ -170,7 +184,7 @@ with st.sidebar:
                 f.write(up_gun.getbuffer())
             st.cache_data.clear()
         
-        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.30, step=0.01)
+        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
         g_rot_z = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
         
         st.divider()
@@ -190,7 +204,7 @@ with st.sidebar:
         j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
-if 'g_off_x' not in locals(): g_off_x = 0.30
+if 'g_off_x' not in locals(): g_off_x = 0.0
 if 'g_rot_z' not in locals(): g_rot_z = 180
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
@@ -199,7 +213,7 @@ if 'j_rot_x' not in locals(): j_rot_x = 0
 if 'j_rot_y' not in locals(): j_rot_y = 0
 if 'js_scale' not in locals(): js_scale = 0.001
 
-# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT WITH INTERACTIVE 3D GIZMO ---
+# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -211,44 +225,60 @@ def build_embedded_viewport(payload):
         <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
         <style>
             body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; }
             #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
             #status { position: absolute; top: 10px; left: 10px; color: #ffffff; font-size: 13px; background: rgba(20,20,20,0.8); padding: 6px 12px; border-radius:4px; border: 1px solid #333; z-index: 10; }
-            #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 250px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 4px; }
-            .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 4px; text-align: center; }
-            .mode-select { display: flex; gap: 4px; margin-bottom: 6px; }
-            .mode-btn { flex: 1; background: #222; border: 1px solid #444; color: #aaa; font-size: 11px; padding: 4px; cursor: pointer; font-weight: bold; border-radius: 3px; }
-            .mode-btn.active { background: #ff9800; color: #000; border-color: #ff9800; }
-            .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-            .jog-label { font-size: 12px; font-weight: bold; font-family: monospace; color: #bbb; width: 25px; }
-            .jog-btn { background: #222; border: 1px solid #444; color: white; width: 40px; height: 24px; font-size: 13px; font-weight: bold; cursor: pointer; border-radius: 4px; transition: all 0.1s; }
+            #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 220px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+            .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
+            
+            .mode-container { display: flex; gap: 4px; margin-bottom: 8px; }
+            .mode-btn { flex: 1; background: #222; border: 1px solid #444; color: #aaa; padding: 5px; font-size: 10px; font-weight: bold; cursor: pointer; border-radius: 4px; text-transform: uppercase; }
+            .mode-btn.active { background: #ff9800; color: black; border-color: #ff9800; }
+            
+            .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+            .jog-label { font-size: 12px; font-weight: bold; font-family: monospace; color: #bbb; }
+            .jog-btn { background: #222; border: 1px solid #444; color: white; width: 45px; height: 26px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; transition: all 0.1s; }
             .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
-            .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 65px; text-align: center; }
-            .action-block { margin-top: 4px; border-top: 1px solid #333; padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
-            .btn-action { width: 100%; border: none; font-weight: bold; height: 28px; border-radius: 4px; cursor: pointer; font-size: 11px; display: flex; align-items: center; justify-content: center; gap: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
+            .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
+            .action-block { margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+            .btn-action { width: 100%; border: none; font-weight: bold; height: 32px; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: background 0.1s; }
             #btn-save-step { background: #ff9800; color: black; }
             #btn-run-sim { background: #4caf50; color: white; }
             #btn-clear-seq { background: #f44336; color: white; }
-            .step-counter { font-size: 11px; font-family: monospace; text-align: center; color: #aaa; }
+            .step-counter { font-size: 12px; font-family: monospace; text-align: center; color: #aaa; margin-top: 2px; }
+            
+            #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
+            .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: bold; }
         </style>
     </head>
     <body>
         <div id="status">WebGL Processing...</div>
         <div id="jog-pendant">
             <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
-            <div class="mode-select">
-                <button class="mode-btn active" id="mode-joint">JOINT</button>
-                <button class="mode-btn" id="mode-tcp">TCP (DRAG)</button>
+            
+            <div class="mode-container">
+                <button id="mode-joint" class="mode-btn active">Joint Jog</button>
+                <button id="mode-tcp" class="mode-btn">⌖ TCP Jog</button>
+            </div>
+
+            <div id="tcp-monitor">
+                <div style="color: #00ffcc; font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
+                <div class="tcp-grid">
+                    <span style="color:#ff4444">X:<span id="lbl-tx">0.00</span></span>
+                    <span style="color:#44ff44">Y:<span id="lbl-ty">0.00</span></span>
+                    <span style="color:#4444ff">Z:<span id="lbl-tz">0.00</span></span>
+                </div>
             </div>
             
-            <div id="jog-panel-container"></div>
+            <div id="joint-jog-container"></div>
             
             <div class="action-block">
-                <div class="jog-row" style="margin-bottom: 2px;">
-                    <div class="jog-label" style="font-size: 10px; color: #aaa; width: auto;">SPEED</div>
-                    <input type="range" id="sld-speed" min="5" max="100" value="50" style="flex-grow: 1; margin: 0 6px; accent-color: #ff9800;">
-                    <div class="val-display" id="val-speed" style="width: 30px; color: #ff9800; font-weight: bold;">50%</div>
+                <div class="jog-row" style="margin-bottom: 4px;">
+                    <div class="jog-label" style="font-size: 11px; color: #aaa;">SPEED</div>
+                    <input type="range" id="sld-speed" min="5" max="100" value="50" step="5" style="flex-grow: 1; margin: 0 10px; accent-color: #ff9800;">
+                    <div class="val-display" id="val-speed" style="width: 35px; color: #ff9800; font-weight: bold;">50%</div>
                 </div>
                 <button class="btn-action" id="btn-save-step">💾 RECORD STEP POSITION</button>
                 <button class="btn-action" id="btn-run-sim">▶️ RUN SIMULATION</button>
@@ -266,9 +296,9 @@ def build_embedded_viewport(payload):
             let localJointAngles = [...data.initialAngles];
             let lastComputedTransforms = [];
             let embeddedTrajectory = [...data.trajectory];
-            let activeMode = 'joint'; 
+            let activeJogMode = "joint"; // "joint" or "tcp"
             
-            const J_STEP = 3 * (Math.PI / 180); 
+            const J_STEP = 5 * (Math.PI / 180);
 
             THREE.Object3D.DefaultUp.set(0, 0, 1);
             const container = document.getElementById('canvas-container');
@@ -304,141 +334,34 @@ def build_embedded_viewport(payload):
             jigMesh.add(internalJigContent);
             scene.add(jigMesh);
 
-            // --- 3D INTERACTIVE TRANSFORMATION GIZMO ---
-            const gizmoGroup = new THREE.Group();
-            scene.add(gizmoGroup);
+            // Create target coordinate frame tracker object for Transform Controls
+            const tcpAnchorPivot = new THREE.Object3D();
+            scene.add(tcpAnchorPivot);
 
-            const colorX = 0xff3333; // Red
-            const colorY = 0x33cc33; // Green
-            const colorZ = 0x3333ff; // Blue
-            const colorHover = 0xffff00; // Yellow Focus
+            // Configure RoboDK-Style 3D interactive manipulation handles
+            const transformGizmo = new THREE.TransformControls(camera, renderer.domElement);
+            transformGizmo.size = 0.65; // Matches compact arrow layout
+            transformGizmo.setMode("translate");
+            transformGizmo.attach(tcpAnchorPivot);
+            transformGizmo.visible = false;
+            transformGizmo.enabled = false;
+            scene.add(transformGizmo);
 
-            function createGizmoArrow(dir, color, axisName) {
-                const arrowGroup = new THREE.Group();
-                arrowGroup.userData = { axis: axisName, baseColor: color, direction: dir.clone() };
-
-                const shaftGeom = new THREE.CylinderGeometry(0.015, 0.015, 0.4, 8);
-                shaftGeom.translate(0, 0.2, 0); 
-                shaftGeom.rotateX(Math.PI / 2); 
-                const shaftMat = new THREE.MeshBasicMaterial({ color: color, depthTest: false, depthWrite: false });
-                const shaft = new THREE.Mesh(shaftGeom, shaftMat);
-                shaft.renderOrder = 999;
-                arrowGroup.add(shaft);
-
-                const coneGeom = new THREE.ConeGeometry(0.04, 0.1, 12);
-                coneGeom.translate(0, 0.4 + 0.05, 0);
-                coneGeom.rotateX(Math.PI / 2);
-                const coneMat = new THREE.MeshBasicMaterial({ color: color, depthTest: false, depthWrite: false });
-                const cone = new THREE.Mesh(coneGeom, coneMat);
-                cone.renderOrder = 999;
-                arrowGroup.add(cone);
-
-                if (dir.x > 0.9) arrowGroup.rotation.y = Math.PI / 2;
-                else if (dir.x < -0.9) arrowGroup.rotation.y = -Math.PI / 2;
-                else if (dir.y > 0.9) arrowGroup.rotation.x = -Math.PI / 2;
-                else if (dir.y < -0.9) arrowGroup.rotation.x = Math.PI / 2;
-                else if (dir.z < -0.9) arrowGroup.rotation.x = Math.PI;
-
-                gizmoGroup.add(arrowGroup);
-                return arrowGroup;
-            }
-
-            const arrowX = createGizmoArrow(new THREE.Vector3(1, 0, 0), colorX, 'X');
-            const arrowY = createGizmoArrow(new THREE.Vector3(0, 1, 0), colorY, 'Y');
-            const arrowZ = createGizmoArrow(new THREE.Vector3(0, 0, 1), colorZ, 'Z');
-
-            const raycaster = new THREE.Raycaster();
-            const mouseVec = new THREE.Vector2();
-            
-            let hoveredAxis = null;
-            let isDraggingGizmo = false;
-            let activeDragAxis = null;
-            
-            let initialTcpWorldPos = new THREE.Vector3();
-            let initialIntersectionPoint = new THREE.Vector3();
-            let dragPlane = new THREE.Plane();
-
-            // --- CURSOR MOUSE MOVEMENT INTERACTION CONTROLLER ---
-            window.addEventListener('mousemove', (e) => {
-                const rect = renderer.domElement.getBoundingClientRect();
-                mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-                mouseVec.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-                if (isDraggingGizmo && activeDragAxis) {
-                    raycaster.setFromCamera(mouseVec, camera);
-                    const currentIntersection = new THREE.Vector3();
-                    raycaster.ray.intersectPlane(dragPlane, currentIntersection);
-                    
-                    const totalMoveDelta = new THREE.Vector3().subVectors(currentIntersection, initialIntersectionPoint);
-                    const axisVector = activeDragAxis.userData.direction.clone();
-                    const scalarProjection = totalMoveDelta.dot(axisVector);
-                    
-                    const targetTcp = initialTcpWorldPos.clone().add(axisVector.multiplyScalar(scalarProjection));
-                    
-                    // Force the target TCP goal itself to never dip below ground level
-                    if (targetTcp.z < 0.0) targetTcp.z = 0.0;
-                    
-                    let candidateAngles = solveIKNumerical(targetTcp);
-                    candidateAngles[7] = localJointAngles[7]; 
-                    
-                    validateAndCommitMovement(candidateAngles);
-                    return;
-                }
-
-                raycaster.setFromCamera(mouseVec, camera);
-                const intersects = raycaster.intersectObjects(gizmoGroup.children, true);
-
-                if (intersects.length > 0 && activeMode === 'tcp' && !runSimulation) {
-                    let parentGroup = intersects[0].object.parent;
-                    if (hoveredAxis !== parentGroup) {
-                        resetGizmoColors();
-                        hoveredAxis = parentGroup;
-                        parentGroup.children.forEach(child => child.material.color.setHex(colorHover));
-                        document.body.style.cursor = 'pointer';
-                    }
-                } else {
-                    if (hoveredAxis) {
-                        resetGizmoColors();
-                        hoveredAxis = null;
-                        document.body.style.cursor = 'default';
-                    }
-                }
+            // Disable Orbit Controls viewport camera shifts while actively grabbing the arrows
+            transformGizmo.addEventListener('dragging-changed', function (e) {
+                controls.enabled = !e.value;
             });
 
-            window.addEventListener('mousedown', () => {
-                if (hoveredAxis && activeMode === 'tcp' && !runSimulation) {
-                    isDraggingGizmo = true;
-                    activeDragAxis = hoveredAxis;
-                    controls.enabled = false; 
-
-                    let currentTransforms = computeForwardKinematics(localJointAngles);
-                    initialTcpWorldPos.copy(getTcpWorldPosition(currentTransforms));
-
-                    raycaster.setFromCamera(mouseVec, camera);
-                    const cameraNormal = new THREE.Vector3();
-                    camera.getWorldDirection(cameraNormal);
-                    cameraNormal.negate();
-                    
-                    dragPlane.setFromNormalAndCoplanarPoint(cameraNormal, initialTcpWorldPos);
-                    raycaster.ray.intersectPlane(dragPlane, initialIntersectionPoint);
+            // Trigger dynamic real-time numerical inverse updates on mouse change events
+            transformGizmo.addEventListener('objectChange', function () {
+                if (activeJogMode !== "tcp" || runSimulation) return;
+                
+                // RESTORE CONSTRAINT 1: Force target tracker tool tip to never drop below floor plane
+                if (tcpAnchorPivot.position.z < 0.0) {
+                    tcpAnchorPivot.position.z = 0.0;
                 }
+                executeCyclicInverseKinematics(tcpAnchorPivot.position);
             });
-
-            window.addEventListener('mouseup', () => {
-                if (isDraggingGizmo) {
-                    isDraggingGizmo = false;
-                    activeDragAxis = null;
-                    controls.enabled = true; 
-                    document.body.style.cursor = 'default';
-                    resetGizmoColors();
-                }
-            });
-
-            function resetGizmoColors() {
-                gizmoGroup.children.forEach(arrow => {
-                    arrow.children.forEach(child => child.material.color.setHex(arrow.userData.baseColor));
-                });
-            }
 
             function base64ToArrayBuffer(base64Str) {
                 const binaryString = window.atob(base64Str);
@@ -449,8 +372,11 @@ def build_embedded_viewport(payload):
             }
 
             let targetColor = 0xcccccc; 
-            if (data.profileName === "Yaskawa_3500") { targetColor = 0x0055ff; } 
-            else if (data.profileName === "KUKA_KR150") { targetColor = 0xff6600; }
+            if (data.profileName === "Yaskawa_3500") {
+                targetColor = 0x0055ff; 
+            } else if (data.profileName === "KUKA_KR150") {
+                targetColor = 0xff6600; 
+            }
 
             for(let i=0; i<7; i++) {
                 let mesh;
@@ -506,6 +432,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().toArray()
                 });
 
+                // Axis 1
                 let m1 = getLinkStructureBaseMatrix(dh[0]);
                 m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
                 currentMatrix.multiply(m1);
@@ -514,6 +441,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
+                // Axis 2
                 let m2 = getLinkStructureBaseMatrix(dh[1]);
                 m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
                 currentMatrix.multiply(m2);
@@ -522,6 +450,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
+                // Axis 3
                 let m3 = getLinkStructureBaseMatrix(dh[2]);
                 m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
                 currentMatrix.multiply(m3);
@@ -530,6 +459,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
+                // Axis 4
                 let m4 = getLinkStructureBaseMatrix(dh[3]);
                 m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
@@ -550,6 +480,7 @@ def build_embedded_viewport(payload):
                     });
                 }
 
+                // Axis 5
                 let m5 = getLinkStructureBaseMatrix(dh[4]);
                 m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                 currentMatrix.multiply(m5);
@@ -558,6 +489,7 @@ def build_embedded_viewport(payload):
                     quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
                 });
 
+                // Axis 6
                 let m6 = getLinkStructureBaseMatrix(dh[5]);
                 if (data.profileName === "Yaskawa_3500") {
                     m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6]));
@@ -573,85 +505,72 @@ def build_embedded_viewport(payload):
                 return computedTransforms;
             }
 
-            function getTcpWorldPosition(transforms) {
-                let wristMatrix = new THREE.Matrix4().compose(
-                    new THREE.Vector3().fromArray(transforms[6].pos),
-                    new THREE.Quaternion().fromArray(transforms[6].quat),
-                    new THREE.Vector3(1, 1, 1)
-                );
-                let tcpPos = new THREE.Vector3();
-                if (data.profileName === "Yaskawa_3500") {
-                    tcpPos.set(0, 0, -data.gunOffset).applyMatrix4(wristMatrix);
-                } else {
-                    tcpPos.set(data.gunOffset, 0, 0).applyMatrix4(wristMatrix);
-                }
-                return tcpPos;
-            }
-
-            // --- CRITICAL FIXED: SAFETY-CONSTRAINED INVERSE KINEMATICS ENGINE ---
-            function solveIKNumerical(targetGlobalTcp) {
-                let currentAngles = [...localJointAngles];
-                let iterations = 15;
-                let tolerance = 0.001;
-                let learningRate = 0.05;
-
-                for (let k = 0; k < iterations; k++) {
-                    let currentTransforms = computeForwardKinematics(currentAngles);
-                    let currentGlobalTcp = getTcpWorldPosition(currentTransforms);
+            // Real-time geometric algorithm to calculate joint updates based on cursor moves
+            function executeCyclicInverseKinematics(targetGlobalPos) {
+                // Iterative convergence optimization run directly on the canvas threads
+                for (let iteration = 0; iteration < 8; iteration++) {
+                    let currentTransforms = computeForwardKinematics(localJointAngles);
+                    let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
                     
-                    let errorVec = new THREE.Vector3().subVectors(targetGlobalTcp, currentGlobalTcp);
-                    if (errorVec.length() < tolerance) break;
+                    let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
+                    if (errorDistance.length() < 0.0005) break;
 
-                    let jacobian = [];
-                    for (let j = 1; j <= 6; j++) {
-                        let deltaAngles = [...currentAngles];
-                        let step = 0.001;
-                        deltaAngles[j] += step;
+                    // Compute correction delta adjustments across tracking links A1 - A3
+                    for (let j = 1; j <= 3; j++) {
+                        let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
                         
-                        let fwdTransforms = computeForwardKinematics(deltaAngles);
-                        let fwdGlobalTcp = getTcpWorldPosition(fwdTransforms);
+                        let axisVectorDirection = new THREE.Vector3(0, 0, 1);
+                        if (j === 2 || j === 3) axisVectorDirection.set(0, 1, 0);
+
+                        let componentToEE = new THREE.Vector3().subVectors(endEffectorPos, jointPosition).normalize();
+                        let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
+
+                        let angleScalarDot = componentToEE.dot(componentToTarget);
+                        let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.15; // Damping response constant
                         
-                        let partialDeriv = new THREE.Vector3().subVectors(fwdGlobalTcp, currentGlobalTcp).multiplyScalar(1.0 / step);
-                        jacobian.push([partialDeriv.x, partialDeriv.y, partialDeriv.z]);
-                    }
-
-                    // Compute joint updates based on error projection
-                    let testAngles = [...currentAngles];
-                    for (let j = 0; j < 6; j++) {
-                        let dotProd = jacobian[j][0]*errorVec.x + jacobian[j][1]*errorVec.y + jacobian[j][2]*errorVec.z;
-                        testAngles[j + 1] += dotProd * learningRate;
-                    }
-
-                    // Immediate continuous inner check: Disallow step if it violates floor boundary matrix
-                    let testTransforms = computeForwardKinematics(testAngles);
-                    let stepIsSafe = true;
-                    for (let i = 0; i < testTransforms.length; i++) {
-                        if (testTransforms[i].pos[2] < 0.0) {
-                            stepIsSafe = false;
-                            break;
+                        if (localizedDeltaTheta > 0.0002) {
+                            let directionalCross = new THREE.Vector3().crossVectors(componentToEE, componentToTarget);
+                            
+                            // Save original state before applying the test rotation frame
+                            let cachedAngle = localJointAngles[j];
+                            
+                            if (directionalCross.dot(axisVectorDirection) < 0) {
+                                localJointAngles[j] -= localizedDeltaTheta;
+                            } else {
+                                localJointAngles[j] += localizedDeltaTheta;
+                            }
+                            
+                            // Prevent out-of-bound structural layout tears
+                            localJointAngles[j] = Math.max(-Math.PI, Math.min(Math.PI, localJointAngles[j]));
+                            
+                            // RESTORE CONSTRAINT 2: Joint Link Floor Safety Boundary Guard Check
+                            let testTransforms = computeForwardKinematics(localJointAngles);
+                            let subfloorViolationDetected = false;
+                            for (let k = 0; k < testTransforms.length; k++) {
+                                if (testTransforms[k].pos[2] < -0.001) { 
+                                    subfloorViolationDetected = true;
+                                    break;
+                                }
+                            }
+                            // If link dips beneath floor plane boundary, instantly roll back the joint position
+                            if (subfloorViolationDetected) {
+                                localJointAngles[j] = cachedAngle;
+                            }
                         }
                     }
-                    
-                    // Also verify the gun tooling mesh position does not submerge below zero
-                    let testTcp = getTcpWorldPosition(testTransforms);
-                    if (testTcp.z < 0.0) stepIsSafe = false;
-
-                    // Only commit the convergence iteration frame if boundary remains clear
-                    if (stepIsSafe) {
-                        currentAngles = testAngles;
-                    } else {
-                        // If moving forward dips a link below floor, scale down the joint delta to zero out negative velocity
-                        learningRate *= 0.5; 
-                    }
                 }
-                return currentAngles;
+                // Redraw links dynamically with coordinate display syncing
+                refreshSceneDisplay(false);
+                updateMonitorHUDText(targetGlobalPos);
             }
 
-            function updateSceneTransforms(transforms, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
+            function refreshSceneDisplay(updateGizmoPosition = true) {
+                lastComputedTransforms = computeForwardKinematics(localJointAngles);
+                
                 for(let i=0; i<7; i++) {
-                    if(links[i] && transforms[i]) {
-                        links[i].position.fromArray(transforms[i].pos);
-                        links[i].quaternion.fromArray(transforms[i].quat);
+                    if(links[i] && lastComputedTransforms[i]) {
+                        links[i].position.fromArray(lastComputedTransforms[i].pos);
+                        links[i].quaternion.fromArray(lastComputedTransforms[i].quat);
                     }
                 }
                 if(links[6]) {
@@ -660,119 +579,106 @@ def build_embedded_viewport(payload):
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
                     if (data.profileName === "Yaskawa_3500") {
-                        gunMesh.translateZ(-gunOffset);
+                        gunMesh.translateZ(-data.gunOffset);
                     } else {
-                        gunMesh.translateX(gunOffset);
+                        gunMesh.translateX(data.gunOffset);
                     }
 
-                    let currentTcp = getTcpWorldPosition(transforms);
-                    gizmoGroup.position.copy(currentTcp);
+                    // Synch coordinate gizmo tracker base positions directly to Axis 6
+                    if (updateGizmoPosition) {
+                        tcpAnchorPivot.position.copy(links[6].position);
+                        tcpAnchorPivot.quaternion.copy(links[6].quaternion);
+                        updateMonitorHUDText(tcpAnchorPivot.position);
+                    }
                 }
-                jigMesh.position.set(jigX, jigY, jigZ);
-                internalJigContent.rotation.z = e1RotAngle;
+                jigMesh.position.set(data.jigX, data.jigY, data.jigZ);
+                internalJigContent.rotation.z = localJointAngles[7];
+
+                // Synchronize dynamic degrees to text displays inside UI list elements
+                for(let i=1; i<=7; i++) {
+                    let displayElement = document.getElementById(`val-${i}`);
+                    if (displayElement) {
+                        displayElement.innerText = `${(localJointAngles[i] * (180 / Math.PI)).toFixed(1)}°`;
+                    }
+                }
             }
 
-            function validateAndCommitMovement(candidateAngles) {
-                let projectedTransforms = computeForwardKinematics(candidateAngles);
-                
-                // Final hard wall confirmation sweep
-                for (let i = 0; i < projectedTransforms.length; i++) {
-                    if (projectedTransforms[i].pos[2] < 0.0) {
-                        return false; 
-                    }
-                }
-                let projectedTcp = getTcpWorldPosition(projectedTransforms);
-                if (projectedTcp.z < 0.0) return false;
-
-                localJointAngles = candidateAngles;
-                lastComputedTransforms = projectedTransforms;
-                updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
-                refreshPendantValues();
-                return true;
+            function updateMonitorHUDText(vectorPos) {
+                document.getElementById("lbl-tx").innerText = vectorPos.x.toFixed(2);
+                document.getElementById("lbl-ty").innerText = vectorPos.y.toFixed(2);
+                document.getElementById("lbl-tz").innerText = vectorPos.z.toFixed(2);
             }
 
-            function drawPendantInterface() {
-                const panel = document.getElementById('jog-panel-container');
-                panel.innerHTML = '';
-                
-                if (activeMode === 'joint') {
-                    gizmoGroup.visible = false; 
-                    for(let i=1; i<=6; i++) {
-                        const row = document.createElement('div');
-                        row.className = 'jog-row';
-                        row.innerHTML = `
-                            <button class="jog-btn" onclick="jogJoint(${i}, -1)">-</button>
-                            <div class="jog-label">A${i}</div>
-                            <div class="val-display" id="val-${i}">0.0°</div>
-                            <button class="jog-btn" onclick="jogJoint(${i}, 1)">+</button>
-                        `;
-                        panel.appendChild(row);
-                    }
-                } else {
-                    gizmoGroup.visible = true; 
-                    const axLabels = ['X', 'Y', 'Z'];
-                    axLabels.forEach((axis) => {
-                        const row = document.createElement('div');
-                        row.className = 'jog-row';
-                        row.innerHTML = `
-                            <div style="font-size: 11px; color:#aaa;">Axis Position ${axis}:</div>
-                            <div class="val-display" id="val-tcp-${axis}" style="font-weight:bold; width:100px; text-align:right; padding-right:10px;">0.00m</div>
-                        `;
-                        panel.appendChild(row);
-                    });
-                }
+            // --- USER MODE CLICK CONTROLLERS ---
+            const btnJoint = document.getElementById("mode-joint");
+            const btnTCP = document.getElementById("mode-tcp");
+            const rowsWrap = document.getElementById("joint-jog-container");
+            const hudMonitor = document.getElementById("tcp-monitor");
 
-                const e1Row = document.createElement('div');
-                e1Row.className = 'jog-row';
-                e1Row.style.marginTop = '6px';
-                e1Row.style.borderTop = '1px solid #333';
-                e1Row.style.paddingTop = '6px';
-                e1Row.innerHTML = `
-                    <button class="jog-btn" onclick="jogJoint(7, -1)">-</button>
-                    <div class="jog-label" style="color:#ff9800;">E1</div>
-                    <div class="val-display" id="val-7">0.0°</div>
-                    <button class="jog-btn" onclick="jogJoint(7, 1)">+</button>
+            btnJoint.addEventListener("click", () => {
+                activeJogMode = "joint";
+                btnJoint.classList.add("active");
+                btnTCP.classList.remove("active");
+                rowsWrap.style.display = "block";
+                hudMonitor.style.display = "none";
+                transformGizmo.visible = false;
+                transformGizmo.enabled = false;
+            });
+
+            btnTCP.addEventListener("click", () => {
+                activeJogMode = "tcp";
+                btnTCP.classList.add("active");
+                btnJoint.classList.remove("active");
+                rowsWrap.style.display = "none";
+                hudMonitor.style.display = "block";
+                transformGizmo.visible = true;
+                transformGizmo.enabled = true;
+                refreshSceneDisplay(true);
+            });
+
+            // --- GENERATE INCREMENTAL BUTTON LAYOUTS ---
+            const rowsContainer = document.getElementById('joint-jog-container');
+            for(let i=1; i<=6; i++) {
+                const row = document.createElement('div');
+                row.className = 'jog-row';
+                row.innerHTML = `
+                    <button class="jog-btn" id="btn-m-${i}">-</button>
+                    <div class="jog-label">A${i}</div>
+                    <div class="val-display" id="val-${i}">0.0°</div>
+                    <button class="jog-btn" id="btn-p-${i}">+</button>
                 `;
-                panel.appendChild(e1Row);
-                refreshPendantValues();
+                rowsContainer.appendChild(row);
+                
+                (function(idx) {
+                    document.getElementById(`btn-m-${idx}`).addEventListener('click', () => jogJoint(idx, -1));
+                    document.getElementById(`btn-p-${idx}`).addEventListener('click', () => jogJoint(idx, 1));
+                })(i);
+            }
+            
+            const e1Row = document.createElement('div');
+            e1Row.className = 'jog-row';
+            e1Row.style.marginTop = '10px';
+            e1Row.style.borderTop = '1px solid #333';
+            e1Row.style.paddingTop = '8px';
+            e1Row.innerHTML = `
+                <button class="jog-btn" id="btn-m-7">-</button>
+                <div class="jog-label" style="color:#ff9800;">E1</div>
+                <div class="val-display" id="val-7">0.0°</div>
+                <button class="jog-btn" id="btn-p-7">+</button>
+            `;
+            rowsContainer.appendChild(e1Row);
+            document.getElementById('btn-m-7').addEventListener('click', () => jogJoint(7, -1));
+            document.getElementById('btn-p-7').addEventListener('click', () => jogJoint(7, 1));
+
+            function jogJoint(jointIdx, direction) {
+                if(runSimulation) return; 
+                localJointAngles[jointIdx] += direction * J_STEP;
+                refreshSceneDisplay(true);
             }
 
-            function refreshPendantValues() {
-                if (activeMode === 'joint') {
-                    for(let i=1; i<=6; i++) {
-                        const elem = document.getElementById(`val-${i}`);
-                        if(elem) elem.innerText = (localJointAngles[i] * (180 / Math.PI)).toFixed(1) + "°";
-                    }
-                } else {
-                    let currentTransforms = computeForwardKinematics(localJointAngles);
-                    let tcp = getTcpWorldPosition(currentTransforms);
-                    if(document.getElementById('val-tcp-X')) document.getElementById('val-tcp-X').innerText = tcp.x.toFixed(3) + "m";
-                    if(document.getElementById('val-tcp-Y')) document.getElementById('val-tcp-Y').innerText = tcp.y.toFixed(3) + "m";
-                    if(document.getElementById('val-tcp-Z')) document.getElementById('val-tcp-Z').innerText = tcp.z.toFixed(3) + "m";
-                }
-                const e1Elem = document.getElementById('val-7');
-                if(e1Elem) e1Elem.innerText = (localJointAngles[7] * (180 / Math.PI)).toFixed(1) + "°";
+            function updateUIElements() {
+                document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
             }
-
-            window.jogJoint = function(jointIdx, direction) {
-                if(runSimulation) return;
-                let candidate = [...localJointAngles];
-                candidate[jointIdx] += direction * J_STEP;
-                validateAndCommitMovement(candidate);
-            };
-
-            document.getElementById('mode-joint').addEventListener('click', () => {
-                activeMode = 'joint';
-                document.getElementById('mode-joint').className = 'mode-btn active';
-                document.getElementById('mode-tcp').className = 'mode-btn';
-                drawPendantInterface();
-            });
-            document.getElementById('mode-tcp').addEventListener('click', () => {
-                activeMode = 'tcp';
-                document.getElementById('mode-tcp').className = 'mode-btn active';
-                document.getElementById('mode-joint').className = 'mode-btn';
-                drawPendantInterface();
-            });
 
             document.getElementById('sld-speed').addEventListener('input', (e) => {
                 document.getElementById('val-speed').innerText = e.target.value + "%";
@@ -785,8 +691,7 @@ def build_embedded_viewport(payload):
                     angles: [...localJointAngles],
                     transforms: JSON.parse(JSON.stringify(lastComputedTransforms))
                 });
-                document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
-                
+                updateUIElements();
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "sync_sequence");
                 targetUrl.searchParams.set("program_data", JSON.stringify(embeddedTrajectory));
@@ -795,7 +700,7 @@ def build_embedded_viewport(payload):
 
             document.getElementById('btn-run-sim').addEventListener('click', () => {
                 if(embeddedTrajectory.length < 2) {
-                    alert("Record at least 2 points first.");
+                    alert("Please record at least 2 structural step points to interpolate trajectory paths.");
                     return;
                 }
                 simStepIndex = 0;
@@ -805,7 +710,7 @@ def build_embedded_viewport(payload):
 
             document.getElementById('btn-clear-seq').addEventListener('click', () => {
                 embeddedTrajectory = [];
-                document.getElementById('lbl-steps').innerText = "Steps: 0";
+                updateUIElements();
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "clear_sequence");
                 window.parent.location.href = targetUrl.toString();
@@ -820,9 +725,8 @@ def build_embedded_viewport(payload):
                 controls.update();
 
                 if (runSimulation && embeddedTrajectory.length >= 2) {
-                    gizmoGroup.visible = false; 
                     document.getElementById('jog-pendant').style.opacity = "0.3"; 
-                    document.getElementById('status').innerText = "Status: Running Simulation";
+                    document.getElementById('status').innerText = "Status: Running Sequence Simulation";
                     let currentPoint = embeddedTrajectory[simStepIndex];
                     let nextPoint = embeddedTrajectory[simStepIndex + 1];
 
@@ -852,13 +756,37 @@ def build_embedded_viewport(payload):
                         blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
                     }
                     let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
+                    
+                    // Force false during playback loops to keep arrow sync stable
+                    localJointAngles = [...currentPoint.angles]; 
                     updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
                     document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
-                    if (activeMode === 'tcp') gizmoGroup.visible = true;
                 }
                 renderer.render(scene, camera);
+            }
+
+            function updateSceneTransforms(transforms, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
+                for(let i=0; i<7; i++) {
+                    if(links[i] && transforms[i]) {
+                        links[i].position.fromArray(transforms[i].pos);
+                        links[i].quaternion.fromArray(transforms[i].quat);
+                    }
+                }
+                if(links[6]) {
+                    links[6].updateMatrixWorld();
+                    gunMesh.position.copy(links[6].position);
+                    gunMesh.quaternion.copy(links[6].quaternion);
+                    
+                    if (data.profileName === "Yaskawa_3500") {
+                        gunMesh.translateZ(-gunOffset);
+                    } else {
+                        gunMesh.translateX(gunOffset);
+                    }
+                }
+                jigMesh.position.set(jigX, jigY, jigZ);
+                internalJigContent.rotation.z = e1RotAngle;
             }
 
             window.addEventListener('resize', () => {
@@ -867,10 +795,9 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            lastComputedTransforms = computeForwardKinematics(localJointAngles);
-            updateSceneTransforms(lastComputedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, localJointAngles[7]);
-            drawPendantInterface();
-            document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
+            // Initial paint execution sequence loop
+            refreshSceneDisplay(true);
+            updateUIElements();
             animate();
         </script>
     </body>
