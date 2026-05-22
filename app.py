@@ -356,7 +356,7 @@ def build_embedded_viewport(payload):
             transformGizmo.addEventListener('objectChange', function () {
                 if (activeJogMode !== "tcp" || runSimulation) return;
                 
-                // RESTORE CONSTRAINT 1: Force target tracker tool tip to never drop below floor plane
+                // Force target tracker tool tip to never drop below floor plane
                 if (tcpAnchorPivot.position.z < 0.0) {
                     tcpAnchorPivot.position.z = 0.0;
                 }
@@ -508,15 +508,15 @@ def build_embedded_viewport(payload):
             // Real-time geometric algorithm to calculate joint updates based on cursor moves
             function executeCyclicInverseKinematics(targetGlobalPos) {
                 // Iterative convergence optimization run directly on the canvas threads
-                for (let iteration = 0; iteration < 8; iteration++) {
+                for (let iteration = 0; iteration < 12; iteration++) {
                     let currentTransforms = computeForwardKinematics(localJointAngles);
                     let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
                     
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
-                    if (errorDistance.length() < 0.0005) break;
+                    if (errorDistance.length() < 0.0001) break;
 
-                    // Compute correction delta adjustments across tracking links A1 - A3
-                    for (let j = 1; j <= 3; j++) {
+                    // ORDER REVERSED: Correctly cascade calculations from Link 3 down to Link 1 first
+                    for (let j = 3; j >= 1; j--) {
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
                         
                         let axisVectorDirection = new THREE.Vector3(0, 0, 1);
@@ -526,9 +526,9 @@ def build_embedded_viewport(payload):
                         let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
 
                         let angleScalarDot = componentToEE.dot(componentToTarget);
-                        let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.15; // Damping response constant
+                        let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.25; // Snappier damping response
                         
-                        if (localizedDeltaTheta > 0.0002) {
+                        if (localizedDeltaTheta > 0.0001) {
                             let directionalCross = new THREE.Vector3().crossVectors(componentToEE, componentToTarget);
                             
                             // Save original state before applying the test rotation frame
@@ -543,7 +543,7 @@ def build_embedded_viewport(payload):
                             // Prevent out-of-bound structural layout tears
                             localJointAngles[j] = Math.max(-Math.PI, Math.min(Math.PI, localJointAngles[j]));
                             
-                            // RESTORE CONSTRAINT 2: Joint Link Floor Safety Boundary Guard Check
+                            // Joint Link Floor Safety Boundary Guard Check
                             let testTransforms = computeForwardKinematics(localJointAngles);
                             let subfloorViolationDetected = false;
                             for (let k = 0; k < testTransforms.length; k++) {
@@ -559,9 +559,15 @@ def build_embedded_viewport(payload):
                         }
                     }
                 }
-                // Redraw links dynamically with coordinate display syncing
-                refreshSceneDisplay(false);
-                updateMonitorHUDText(targetGlobalPos);
+                
+                // FIXED SEPARATION BUG: Snap the gizmo coordinate directly to the true final Axis 6 position
+                // This prevents the cursor arrows from expanding away from the robot during long drags.
+                let finalTransforms = computeForwardKinematics(localJointAngles);
+                let trueAxis6Pos = new THREE.Vector3().fromArray(finalTransforms[6].pos);
+                tcpAnchorPivot.position.copy(trueAxis6Pos);
+
+                refreshSceneDisplay(false); // Render changes without resetting gizmo again
+                updateMonitorHUDText(trueAxis6Pos);
             }
 
             function refreshSceneDisplay(updateGizmoPosition = true) {
@@ -584,7 +590,7 @@ def build_embedded_viewport(payload):
                         gunMesh.translateX(data.gunOffset);
                     }
 
-                    // Synch coordinate gizmo tracker base positions directly to Axis 6
+                    // Sync coordinate gizmo tracker base positions directly to Axis 6
                     if (updateGizmoPosition) {
                         tcpAnchorPivot.position.copy(links[6].position);
                         tcpAnchorPivot.quaternion.copy(links[6].quaternion);
@@ -757,7 +763,6 @@ def build_embedded_viewport(payload):
                     }
                     let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
                     
-                    // Force false during playback loops to keep arrow sync stable
                     localJointAngles = [...currentPoint.angles]; 
                     updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
                 } else {
