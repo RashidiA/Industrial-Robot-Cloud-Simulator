@@ -199,7 +199,7 @@ if 'j_rot_x' not in locals(): j_rot_x = 0
 if 'j_rot_y' not in locals(): j_rot_y = 0
 if 'js_scale' not in locals(): js_scale = 0.001
 
-# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT WITH INTERACTIVE GIZMO ARROWS ---
+# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT WITH ADVANCED ARROW DRAGGING ENGINE ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -305,11 +305,10 @@ def build_embedded_viewport(payload):
             jigMesh.add(internalJigContent);
             scene.add(jigMesh);
 
-            // --- ROBODK STYLE GIZMO ACCELERATION STACK ---
+            // --- ROBODK INTERACTIVE DRAG GIZMO SYSTEM ---
             const gizmoGroup = new THREE.Group();
             scene.add(gizmoGroup);
 
-            // Base color variables
             const colorX = 0xff3333; // Red
             const colorY = 0x33cc33; // Green
             const colorZ = 0x3333ff; // Blue
@@ -317,27 +316,27 @@ def build_embedded_viewport(payload):
 
             function createGizmoArrow(dir, color, axisName) {
                 const arrowGroup = new THREE.Group();
-                arrowGroup.userData = { axis: axisName, baseColor: color };
+                arrowGroup.userData = { axis: axisName, baseColor: color, direction: dir.clone() };
 
-                // Shaft
-                const shaftGeom = new THREE.CylinderGeometry(0.012, 0.012, 0.35, 8);
-                shaftGeom.translate(0, 0.175, 0); 
+                // Shaft Geometry
+                const shaftGeom = new THREE.CylinderGeometry(0.015, 0.015, 0.4, 8);
+                shaftGeom.translate(0, 0.2, 0); 
                 shaftGeom.rotateX(Math.PI / 2); 
                 const shaftMat = new THREE.MeshBasicMaterial({ color: color, depthTest: false, depthWrite: false });
                 const shaft = new THREE.Mesh(shaftGeom, shaftMat);
                 shaft.renderOrder = 999;
                 arrowGroup.add(shaft);
 
-                // Cone tip
-                const coneGeom = new THREE.ConeGeometry(0.035, 0.09, 12);
-                coneGeom.translate(0, 0.35 + 0.045, 0);
+                // Cone head Geometry
+                const coneGeom = new THREE.ConeGeometry(0.04, 0.1, 12);
+                coneGeom.translate(0, 0.4 + 0.05, 0);
                 coneGeom.rotateX(Math.PI / 2);
                 const coneMat = new THREE.MeshBasicMaterial({ color: color, depthTest: false, depthWrite: false });
                 const cone = new THREE.Mesh(coneGeom, coneMat);
                 cone.renderOrder = 999;
                 arrowGroup.add(cone);
 
-                // Reorient standard up-pointing vectors directly toward target directions
+                // Reorient vector offsets to align with world axes
                 if (dir.x > 0.9) arrowGroup.rotation.y = Math.PI / 2;
                 else if (dir.x < -0.9) arrowGroup.rotation.y = -Math.PI / 2;
                 else if (dir.y > 0.9) arrowGroup.rotation.x = -Math.PI / 2;
@@ -352,47 +351,96 @@ def build_embedded_viewport(payload):
             const arrowY = createGizmoArrow(new THREE.Vector3(0, 1, 0), colorY, 'Y');
             const arrowZ = createGizmoArrow(new THREE.Vector3(0, 0, 1), colorZ, 'Z');
 
-            // Raycasting cursor interaction
+            // Drag Tracker variables
             const raycaster = new THREE.Raycaster();
             const mouseVec = new THREE.Vector2();
-            let hoveredAxisMesh = null;
+            
+            let hoveredAxis = null;
+            let isDraggingGizmo = false;
+            let activeDragAxis = null;
+            
+            let initialTcpWorldPos = new THREE.Vector3();
+            let initialIntersectionPoint = new THREE.Vector3();
+            let dragPlane = new THREE.Plane();
 
+            // Handle hover highlighting
             window.addEventListener('mousemove', (e) => {
                 const rect = renderer.domElement.getBoundingClientRect();
                 mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
                 mouseVec.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+                if (isDraggingGizmo && activeDragAxis) {
+                    // Continuous Drag Evaluation Math
+                    raycaster.setFromCamera(mouseVec, camera);
+                    const currentIntersection = new THREE.Vector3();
+                    raycaster.ray.intersectPlane(dragPlane, currentIntersection);
+                    
+                    // Project intersection difference onto the active vector line
+                    const totalMoveDelta = new THREE.Vector3().subVectors(currentIntersection, initialIntersectionPoint);
+                    const axisVector = activeDragAxis.userData.direction.clone();
+                    const scalarProjection = totalMoveDelta.dot(axisVector);
+                    
+                    // Create dynamic candidate translation target
+                    const targetTcp = initialTcpWorldPos.clone().add(axisVector.multiplyScalar(scalarProjection));
+                    
+                    // Run real-time client-side Inverse Kinematics loop
+                    let candidateAngles = solveIKDelta(targetTcp);
+                    candidateAngles[7] = localJointAngles[7]; // Retain track rail constant
+                    
+                    // Run strict ground clearance check before updating posture
+                    validateAndCommitMovement(candidateAngles);
+                    return;
+                }
 
                 raycaster.setFromCamera(mouseVec, camera);
                 const intersects = raycaster.intersectObjects(gizmoGroup.children, true);
 
                 if (intersects.length > 0 && activeMode === 'tcp' && !runSimulation) {
                     let parentGroup = intersects[0].object.parent;
-                    if (hoveredAxisMesh !== parentGroup) {
+                    if (hoveredAxis !== parentGroup) {
                         resetGizmoColors();
-                        hoveredAxisMesh = parentGroup;
+                        hoveredAxis = parentGroup;
                         parentGroup.children.forEach(child => child.material.color.setHex(colorHover));
                         document.body.style.cursor = 'pointer';
                     }
                 } else {
-                    if (hoveredAxisMesh) {
+                    if (hoveredAxis) {
                         resetGizmoColors();
-                        hoveredAxisMesh = null;
+                        hoveredAxis = null;
                         document.body.style.cursor = 'default';
                     }
                 }
             });
 
-            // Trigger click step on matching hover arrow axes
-            window.addEventListener('click', () => {
-                if (hoveredAxisMesh && activeMode === 'tcp' && !runSimulation) {
-                    const axis = hoveredAxisMesh.userData.axis;
-                    // Determine look target vector to decide positive or negative step orientation safely
-                    const cameraDir = new THREE.Vector3();
-                    camera.getWorldDirection(cameraDir);
-                    const dot = (axis === 'X') ? cameraDir.x : (axis === 'Y' ? cameraDir.y : cameraDir.z);
-                    const targetDirectionSign = (dot > 0) ? -1 : 1; 
+            // Handle Drag Mouse Down Action
+            window.addEventListener('mousedown', (e) => {
+                if (hoveredAxis && activeMode === 'tcp' && !runSimulation) {
+                    isDraggingGizmo = true;
+                    activeDragAxis = hoveredAxis;
+                    controls.enabled = false; // Disable Orbit Controls while dragging
+
+                    let currentTransforms = computeForwardKinematics(localJointAngles);
+                    initialTcpWorldPos.copy(getTcpWorldPosition(currentTransforms));
+
+                    // Construct helper calculation projection plane facing the active camera viewport
+                    raycaster.setFromCamera(mouseVec, camera);
+                    const cameraNormal = new THREE.Vector3();
+                    camera.getWorldDirection(cameraNormal);
+                    cameraNormal.negate();
                     
-                    window.jogCartesian(axis, targetDirectionSign);
+                    dragPlane.setFromNormalAndCoplanarPoint(cameraNormal, initialTcpWorldPos);
+                    raycaster.ray.intersectPlane(dragPlane, initialIntersectionPoint);
+                }
+            });
+
+            // Handle Drag Release Action
+            window.addEventListener('mouseup', () => {
+                if (isDraggingGizmo) {
+                    isDraggingGizmo = false;
+                    activeDragAxis = null;
+                    controls.enabled = true; // Restore camera controls
+                    document.body.style.cursor = 'default';
+                    resetGizmoColors();
                 }
             });
 
@@ -602,7 +650,6 @@ def build_embedded_viewport(payload):
                         gunMesh.translateX(gunOffset);
                     }
 
-                    // Dynamically position the RoboDK Gizmo group center right at the active tool center point
                     let currentTcp = getTcpWorldPosition(transforms);
                     gizmoGroup.position.copy(currentTcp);
                 }
@@ -642,7 +689,7 @@ def build_embedded_viewport(payload):
                     statusBox.innerText = "Status: Online (WebGL Ready)";
                     statusBox.style.color = "#ffffff";
                     statusBox.style.fontWeight = "normal";
-                }, 1800);
+                }, 1000);
             }
 
             function drawPendantInterface() {
@@ -650,7 +697,7 @@ def build_embedded_viewport(payload):
                 panel.innerHTML = '';
                 
                 if (activeMode === 'joint') {
-                    gizmoGroup.visible = false; // Hide tracking arrows in joint mode
+                    gizmoGroup.visible = false; 
                     for(let i=1; i<=6; i++) {
                         const row = document.createElement('div');
                         row.className = 'jog-row';
@@ -663,7 +710,7 @@ def build_embedded_viewport(payload):
                         panel.appendChild(row);
                     }
                 } else {
-                    gizmoGroup.visible = true; // Make RoboDK arrows visible
+                    gizmoGroup.visible = true; 
                     const axLabels = ['X', 'Y', 'Z'];
                     axLabels.forEach((axis, idx) => {
                         const row = document.createElement('div');
@@ -719,7 +766,6 @@ def build_embedded_viewport(payload):
 
             window.jogCartesian = function(axis, direction) {
                 if(runSimulation) return;
-                
                 let currentTransforms = computeForwardKinematics(localJointAngles);
                 let targetTcp = getTcpWorldPosition(currentTransforms);
                 
@@ -729,7 +775,6 @@ def build_embedded_viewport(payload):
                 
                 let candidateAngles = solveIKDelta(targetTcp);
                 candidateAngles[7] = localJointAngles[7]; 
-                
                 validateAndCommitMovement(candidateAngles);
             };
 
@@ -792,7 +837,7 @@ def build_embedded_viewport(payload):
                 controls.update();
 
                 if (runSimulation && embeddedTrajectory.length >= 2) {
-                    gizmoGroup.visible = false; // Hide during auto playback
+                    gizmoGroup.visible = false; 
                     document.getElementById('jog-pendant').style.opacity = "0.3"; 
                     document.getElementById('status').innerText = "Status: Running Sequence Simulation";
                     let currentPoint = embeddedTrajectory[simStepIndex];
