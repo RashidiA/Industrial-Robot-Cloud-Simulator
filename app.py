@@ -300,6 +300,16 @@ def build_embedded_viewport(payload):
             
             const J_STEP = 5 * (Math.PI / 180);
 
+            // --- GLOBAL ROTATION BOUNDARY DEFINITIONS (IN RADIANS) ---
+            const JOINT_LIMITS = {
+                1: { min: -180 * (Math.PI / 180), max: 180 * (Math.PI / 180) },
+                2: { min: -60  * (Math.PI / 180), max: 90  * (Math.PI / 180) },
+                3: { min: -80  * (Math.PI / 180), max: 85  * (Math.PI / 180) },
+                4: { min: -180 * (Math.PI / 180), max: 180 * (Math.PI / 180) },
+                5: { min: -130 * (Math.PI / 180), max: 130 * (Math.PI / 180) },
+                6: { min: -180 * (Math.PI / 180), max: 180 * (Math.PI / 180) }
+            };
+
             THREE.Object3D.DefaultUp.set(0, 0, 1);
             const container = document.getElementById('canvas-container');
             const scene = new THREE.Scene();
@@ -334,29 +344,24 @@ def build_embedded_viewport(payload):
             jigMesh.add(internalJigContent);
             scene.add(jigMesh);
 
-            // Create target coordinate frame tracker object for Transform Controls
             const tcpAnchorPivot = new THREE.Object3D();
             scene.add(tcpAnchorPivot);
 
-            // Configure RoboDK-Style 3D interactive manipulation handles
             const transformGizmo = new THREE.TransformControls(camera, renderer.domElement);
-            transformGizmo.size = 0.65; // Matches compact arrow layout
+            transformGizmo.size = 0.65; 
             transformGizmo.setMode("translate");
             transformGizmo.attach(tcpAnchorPivot);
             transformGizmo.visible = false;
             transformGizmo.enabled = false;
             scene.add(transformGizmo);
 
-            // Disable Orbit Controls viewport camera shifts while actively grabbing the arrows
             transformGizmo.addEventListener('dragging-changed', function (e) {
                 controls.enabled = !e.value;
             });
 
-            // Trigger dynamic real-time numerical inverse updates on mouse change events
             transformGizmo.addEventListener('objectChange', function () {
                 if (activeJogMode !== "tcp" || runSimulation) return;
                 
-                // Force target tracker tool tip to never drop below floor plane
                 if (tcpAnchorPivot.position.z < 0.0) {
                     tcpAnchorPivot.position.z = 0.0;
                 }
@@ -505,9 +510,7 @@ def build_embedded_viewport(payload):
                 return computedTransforms;
             }
 
-            // Real-time geometric algorithm to calculate joint updates based on cursor moves
             function executeCyclicInverseKinematics(targetGlobalPos) {
-                // Iterative convergence optimization run directly on the canvas threads
                 for (let iteration = 0; iteration < 12; iteration++) {
                     let currentTransforms = computeForwardKinematics(localJointAngles);
                     let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
@@ -515,7 +518,7 @@ def build_embedded_viewport(payload):
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
                     if (errorDistance.length() < 0.0001) break;
 
-                    // ORDER REVERSED: Correctly cascade calculations from Link 3 down to Link 1 first
+                    // Cascade calculations backwards from Link 3 down to Link 1
                     for (let j = 3; j >= 1; j--) {
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
                         
@@ -526,12 +529,10 @@ def build_embedded_viewport(payload):
                         let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
 
                         let angleScalarDot = componentToEE.dot(componentToTarget);
-                        let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.25; // Snappier damping response
+                        let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.25; 
                         
                         if (localizedDeltaTheta > 0.0001) {
                             let directionalCross = new THREE.Vector3().crossVectors(componentToEE, componentToTarget);
-                            
-                            // Save original state before applying the test rotation frame
                             let cachedAngle = localJointAngles[j];
                             
                             if (directionalCross.dot(axisVectorDirection) < 0) {
@@ -540,8 +541,10 @@ def build_embedded_viewport(payload):
                                 localJointAngles[j] += localizedDeltaTheta;
                             }
                             
-                            // Prevent out-of-bound structural layout tears
-                            localJointAngles[j] = Math.max(-Math.PI, Math.min(Math.PI, localJointAngles[j]));
+                            // --- CONSTRAINT OVERWRITE: Clamp TCP movements inside specific hardware limits ---
+                            if (JOINT_LIMITS[j]) {
+                                localJointAngles[j] = Math.max(JOINT_LIMITS[j].min, Math.min(JOINT_LIMITS[j].max, localJointAngles[j]));
+                            }
                             
                             // Joint Link Floor Safety Boundary Guard Check
                             let testTransforms = computeForwardKinematics(localJointAngles);
@@ -552,7 +555,6 @@ def build_embedded_viewport(payload):
                                     break;
                                 }
                             }
-                            // If link dips beneath floor plane boundary, instantly roll back the joint position
                             if (subfloorViolationDetected) {
                                 localJointAngles[j] = cachedAngle;
                             }
@@ -560,17 +562,22 @@ def build_embedded_viewport(payload):
                     }
                 }
                 
-                // FIXED SEPARATION BUG: Snap the gizmo coordinate directly to the true final Axis 6 position
-                // This prevents the cursor arrows from expanding away from the robot during long drags.
                 let finalTransforms = computeForwardKinematics(localJointAngles);
                 let trueAxis6Pos = new THREE.Vector3().fromArray(finalTransforms[6].pos);
                 tcpAnchorPivot.position.copy(trueAxis6Pos);
 
-                refreshSceneDisplay(false); // Render changes without resetting gizmo again
+                refreshSceneDisplay(false); 
                 updateMonitorHUDText(trueAxis6Pos);
             }
 
             function refreshSceneDisplay(updateGizmoPosition = true) {
+                // Global initialization clamping pass (Prevents layout pops on cross-profile initialization)
+                for (let i = 1; i <= 6; i++) {
+                    if (JOINT_LIMITS[i]) {
+                        localJointAngles[i] = Math.max(JOINT_LIMITS[i].min, Math.min(JOINT_LIMITS[i].max, localJointAngles[i]));
+                    }
+                }
+
                 lastComputedTransforms = computeForwardKinematics(localJointAngles);
                 
                 for(let i=0; i<7; i++) {
@@ -590,7 +597,6 @@ def build_embedded_viewport(payload):
                         gunMesh.translateX(data.gunOffset);
                     }
 
-                    // Sync coordinate gizmo tracker base positions directly to Axis 6
                     if (updateGizmoPosition) {
                         tcpAnchorPivot.position.copy(links[6].position);
                         tcpAnchorPivot.quaternion.copy(links[6].quaternion);
@@ -600,7 +606,6 @@ def build_embedded_viewport(payload):
                 jigMesh.position.set(data.jigX, data.jigY, data.jigZ);
                 internalJigContent.rotation.z = localJointAngles[7];
 
-                // Synchronize dynamic degrees to text displays inside UI list elements
                 for(let i=1; i<=7; i++) {
                     let displayElement = document.getElementById(`val-${i}`);
                     if (displayElement) {
@@ -678,7 +683,14 @@ def build_embedded_viewport(payload):
 
             function jogJoint(jointIdx, direction) {
                 if(runSimulation) return; 
-                localJointAngles[jointIdx] += direction * J_STEP;
+                let tentativeAngle = localJointAngles[jointIdx] + (direction * J_STEP);
+                
+                // --- CONSTRAINT OVERWRITE: Clamp Joint Jog button movements inside specific limits ---
+                if (JOINT_LIMITS[jointIdx]) {
+                    tentativeAngle = Math.max(JOINT_LIMITS[jointIdx].min, Math.min(JOINT_LIMITS[jointIdx].max, tentativeAngle));
+                }
+                
+                localJointAngles[jointIdx] = tentativeAngle;
                 refreshSceneDisplay(true);
             }
 
@@ -800,7 +812,6 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // Initial paint execution sequence loop
             refreshSceneDisplay(true);
             updateUIElements();
             animate();
