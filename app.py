@@ -184,9 +184,12 @@ with st.sidebar:
                 f.write(up_gun.getbuffer())
             st.cache_data.clear()
         
+        # Expanded Tool Calibration Sliders (X, Y, Z Offsets)
         g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
+        g_off_y = st.slider("Gun Offset Y", -0.5, 0.5, 0.0, step=0.01)
+        g_off_z = st.slider("Gun Offset Z", -0.5, 0.5, 0.0, step=0.01)
         g_rot_y = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
-        g_rot_z = st.slider("Gun Twist Orientation (Z-Axis Rot)", -180, 180, 0, step=5) # Added Z-Axis Calibration Slider
+        g_rot_z = st.slider("Gun Twist Orientation (Z-Axis Rot)", -180, 180, 0, step=5)
         
         st.divider()
         st.write("**🏗️ Rotary Positioning Jig**")
@@ -206,6 +209,8 @@ with st.sidebar:
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
 if 'g_off_x' not in locals(): g_off_x = 0.0
+if 'g_off_y' not in locals(): g_off_y = 0.0
+if 'g_off_z' not in locals(): g_off_z = 0.0
 if 'g_rot_y' not in locals(): g_rot_y = 180
 if 'g_rot_z' not in locals(): g_rot_z = 0
 if 'jx_pos' not in locals(): jx_pos = 1.6
@@ -410,7 +415,7 @@ def build_embedded_viewport(payload):
                 const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
                 gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
                 gunInternalMesh.rotation.y = data.gunRotY; 
-                gunInternalMesh.rotation.z = data.gunRotZ; // Added Z axis local Euler transformation mapping
+                gunInternalMesh.rotation.z = data.gunRotZ; 
                 gunMesh.add(gunInternalMesh);
             }
 
@@ -589,11 +594,10 @@ def build_embedded_viewport(payload):
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
-                    if (data.profileName === "Yaskawa_3500") {
-                        gunMesh.translateZ(-data.gunOffset);
-                    } else {
-                        gunMesh.translateX(data.gunOffset);
-                    }
+                    // Unified Multi-Axis Local FLange Translation Control
+                    gunMesh.translateX(data.gunOffsetX);
+                    gunMesh.translateY(data.gunOffsetY);
+                    gunMesh.translateZ(data.gunOffsetZ);
 
                     if (updateGizmoPosition) {
                         tcpAnchorPivot.position.copy(links[6].position);
@@ -771,7 +775,7 @@ def build_embedded_viewport(payload):
                     let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
                     
                     localJointAngles = [...currentPoint.angles]; 
-                    updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
+                    updateSceneTransforms(blendedTransforms, data.gunOffsetX, data.gunOffsetY, data.gunOffsetZ, data.jigX, data.jigY, data.jigZ, intermediateE1);
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
                     document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
@@ -779,7 +783,7 @@ def build_embedded_viewport(payload):
                 renderer.render(scene, camera);
             }
 
-            function updateSceneTransforms(transforms, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
+            function updateSceneTransforms(transforms, gunOffsetX, gunOffsetY, gunOffsetZ, jigX, jigY, jigZ, e1RotAngle) {
                 for(let i=0; i<7; i++) {
                     if(links[i] && transforms[i]) {
                         links[i].position.fromArray(transforms[i].pos);
@@ -791,11 +795,9 @@ def build_embedded_viewport(payload):
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
-                    if (data.profileName === "Yaskawa_3500") {
-                        gunMesh.translateZ(-gunOffset);
-                    } else {
-                        gunMesh.translateX(gunOffset);
-                    }
+                    gunMesh.translateX(gunOffsetX);
+                    gunMesh.translateY(gunOffsetY);
+                    gunMesh.translateZ(gunOffsetZ);
                 }
                 jigMesh.position.set(jigX, jigY, jigZ);
                 internalJigContent.rotation.z = e1RotAngle;
@@ -823,32 +825,4 @@ path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
 link_b64s = []
 for i in range(7):
-    mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
-    target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", selected_profile, mesh_filename)
-    
-    if not os.path.exists(target_mesh_path):
-        target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
-        
-    link_b64s.append(get_file_base64_cached(target_mesh_path))
-
-scene_payload = {
-    "profileName": selected_profile,
-    "trajectory": st.session_state.program,
-    "initialAngles": st.session_state.j_angles,
-    "linkGeometries": link_b64s,
-    "fallbackHeights": active_cfg["fallback_heights"],
-    "dhConfig": active_cfg["links"],
-    "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
-    "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
-    "gunOffset": g_off_x,
-    "gunRotY": float(g_rot_y) * (np.pi / 180.0),
-    "gunRotZ": float(g_rot_z) * (np.pi / 180.0), # Added Z rotation matrix stream entry
-    "jigX": jx_pos,
-    "jigY": jy_pos,
-    "jigZ": jz_pos,
-    "rotX": float(j_rot_x) * (np.pi / 180.0),
-    "rotY": float(j_rot_y) * (np.pi / 180.0),
-    "jigScale": js_scale
-}
-
-build_embedded_viewport(scene_payload)
+    mesh_filename = f"link_{i}.stl
