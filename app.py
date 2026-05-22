@@ -185,7 +185,8 @@ with st.sidebar:
             st.cache_data.clear()
         
         g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
-        g_rot_z = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
+        g_rot_y = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
+        g_rot_z = st.slider("Gun Twist Orientation (Z-Axis Rot)", -180, 180, 0, step=5) # Added Z-Axis Calibration Slider
         
         st.divider()
         st.write("**🏗️ Rotary Positioning Jig**")
@@ -205,7 +206,8 @@ with st.sidebar:
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
 if 'g_off_x' not in locals(): g_off_x = 0.0
-if 'g_rot_z' not in locals(): g_rot_z = 180
+if 'g_rot_y' not in locals(): g_rot_y = 180
+if 'g_rot_z' not in locals(): g_rot_z = 0
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
 if 'jz_pos' not in locals(): jz_pos = 0.55
@@ -296,11 +298,10 @@ def build_embedded_viewport(payload):
             let localJointAngles = [...data.initialAngles];
             let lastComputedTransforms = [];
             let embeddedTrajectory = [...data.trajectory];
-            let activeJogMode = "joint"; // "joint" or "tcp"
+            let activeJogMode = "joint"; 
             
             const J_STEP = 5 * (Math.PI / 180);
 
-            // --- GLOBAL ROTATION BOUNDARY DEFINITIONS (IN RADIANS) ---
             const JOINT_LIMITS = {
                 1: { min: -180 * (Math.PI / 180), max: 180 * (Math.PI / 180) },
                 2: { min: -60  * (Math.PI / 180), max: 90  * (Math.PI / 180) },
@@ -408,7 +409,8 @@ def build_embedded_viewport(payload):
                 geometry.rotateY(Math.PI / 2);
                 const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
                 gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
-                gunInternalMesh.rotation.y = data.gunRotZ; 
+                gunInternalMesh.rotation.y = data.gunRotY; 
+                gunInternalMesh.rotation.z = data.gunRotZ; // Added Z axis local Euler transformation mapping
                 gunMesh.add(gunInternalMesh);
             }
 
@@ -518,7 +520,6 @@ def build_embedded_viewport(payload):
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
                     if (errorDistance.length() < 0.0001) break;
 
-                    // Cascade calculations backwards from Link 3 down to Link 1
                     for (let j = 3; j >= 1; j--) {
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
                         
@@ -541,12 +542,10 @@ def build_embedded_viewport(payload):
                                 localJointAngles[j] += localizedDeltaTheta;
                             }
                             
-                            // --- CONSTRAINT OVERWRITE: Clamp TCP movements inside specific hardware limits ---
                             if (JOINT_LIMITS[j]) {
                                 localJointAngles[j] = Math.max(JOINT_LIMITS[j].min, Math.min(JOINT_LIMITS[j].max, localJointAngles[j]));
                             }
                             
-                            // Joint Link Floor Safety Boundary Guard Check
                             let testTransforms = computeForwardKinematics(localJointAngles);
                             let subfloorViolationDetected = false;
                             for (let k = 0; k < testTransforms.length; k++) {
@@ -571,7 +570,6 @@ def build_embedded_viewport(payload):
             }
 
             function refreshSceneDisplay(updateGizmoPosition = true) {
-                // Global initialization clamping pass (Prevents layout pops on cross-profile initialization)
                 for (let i = 1; i <= 6; i++) {
                     if (JOINT_LIMITS[i]) {
                         localJointAngles[i] = Math.max(JOINT_LIMITS[i].min, Math.min(JOINT_LIMITS[i].max, localJointAngles[i]));
@@ -620,7 +618,6 @@ def build_embedded_viewport(payload):
                 document.getElementById("lbl-tz").innerText = vectorPos.z.toFixed(2);
             }
 
-            // --- USER MODE CLICK CONTROLLERS ---
             const btnJoint = document.getElementById("mode-joint");
             const btnTCP = document.getElementById("mode-tcp");
             const rowsWrap = document.getElementById("joint-jog-container");
@@ -647,7 +644,6 @@ def build_embedded_viewport(payload):
                 refreshSceneDisplay(true);
             });
 
-            // --- GENERATE INCREMENTAL BUTTON LAYOUTS ---
             const rowsContainer = document.getElementById('joint-jog-container');
             for(let i=1; i<=6; i++) {
                 const row = document.createElement('div');
@@ -685,7 +681,6 @@ def build_embedded_viewport(payload):
                 if(runSimulation) return; 
                 let tentativeAngle = localJointAngles[jointIdx] + (direction * J_STEP);
                 
-                // --- CONSTRAINT OVERWRITE: Clamp Joint Jog button movements inside specific limits ---
                 if (JOINT_LIMITS[jointIdx]) {
                     tentativeAngle = Math.max(JOINT_LIMITS[jointIdx].min, Math.min(JOINT_LIMITS[jointIdx].max, tentativeAngle));
                 }
@@ -846,7 +841,8 @@ scene_payload = {
     "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
     "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
     "gunOffset": g_off_x,
-    "gunRotZ": float(g_rot_z) * (np.pi / 180.0),
+    "gunRotY": float(g_rot_y) * (np.pi / 180.0),
+    "gunRotZ": float(g_rot_z) * (np.pi / 180.0), # Added Z rotation matrix stream entry
     "jigX": jx_pos,
     "jigY": jy_pos,
     "jigZ": jz_pos,
