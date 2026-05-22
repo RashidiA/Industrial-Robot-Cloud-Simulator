@@ -164,7 +164,7 @@ if "event" in query_params:
 # --- 6. OPERATOR INTERFACE CONTROLS ---
 with st.sidebar:
     with st.expander("🛠️ Layout Setup", expanded=False):
-        if st.button("🔴 RESET GUN & JIG", use_container_width=True):
+        if st.button("🔴 RESET TOOL & JIG", use_container_width=True):
             for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
                 if os.path.exists(f):
                     try: os.remove(f)
@@ -177,7 +177,7 @@ with st.sidebar:
             st.rerun()
             
         st.divider()
-        st.write("**🔫 Welding Gun Tooling**")
+        st.write("**🔫 Robot Tooling**")
         up_gun = st.file_uploader("Upload Gun STL", type=["stl"], key="gun_up")
         if up_gun:
             with open(os.path.join(TEMP_DIR, "gun.stl"), "wb") as f: 
@@ -185,11 +185,11 @@ with st.sidebar:
             st.cache_data.clear()
         
         # Expanded Tool Calibration Sliders (X, Y, Z Offsets)
-        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
-        g_off_y = st.slider("Gun Offset Y", -0.5, 0.5, 0.0, step=0.01)
-        g_off_z = st.slider("Gun Offset Z", -0.5, 0.5, 0.0, step=0.01)
-        g_rot_y = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
-        g_rot_z = st.slider("Gun Twist Orientation (Z-Axis Rot)", -180, 180, 0, step=5)
+        g_off_x = st.slider("Tool Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
+        g_off_y = st.slider("Tool Offset Y", -0.5, 0.5, 0.0, step=0.01)
+        g_off_z = st.slider("Tool Offset Z", -0.5, 0.5, 0.0, step=0.01)
+        g_rot_y = st.slider("Tool Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
+        g_rot_z = st.slider("Tool Twist Orientation (Z-Axis Rot)", -180, 180, 0, step=5)
         
         st.divider()
         st.write("**🏗️ Rotary Positioning Jig**")
