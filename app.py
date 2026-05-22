@@ -57,7 +57,7 @@ ROBOT_REGISTRY = {
     },
     "KUKA_KR150": {
         "links": [
-            {"name": "A1", "trans": [0.0, 0.0, 0.55],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 0, 1]},
+            {"name": "A1", "trans": [0.0, 0.0, 0.55],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
             {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [1.3, 0.0, -0.05],  "orient": [0.0, 1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A4", "trans": [2.40, 0.0, 0.1],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
@@ -199,7 +199,7 @@ if 'j_rot_x' not in locals(): j_rot_x = 0
 if 'j_rot_y' not in locals(): j_rot_y = 0
 if 'js_scale' not in locals(): js_scale = 0.001
 
-# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT WITH ADVANCED ARROW DRAGGING ENGINE ---
+# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT (WITH 3D TRANSFORM GIZMO) ---
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -269,7 +269,6 @@ def build_embedded_viewport(payload):
             let activeMode = 'joint'; 
             
             const J_STEP = 3 * (Math.PI / 180); 
-            const L_STEP = 0.02; 
 
             THREE.Object3D.DefaultUp.set(0, 0, 1);
             const container = document.getElementById('canvas-container');
@@ -336,7 +335,7 @@ def build_embedded_viewport(payload):
                 cone.renderOrder = 999;
                 arrowGroup.add(cone);
 
-                // Reorient vector offsets to align with world axes
+                // Orient vectors to align with world axes
                 if (dir.x > 0.9) arrowGroup.rotation.y = Math.PI / 2;
                 else if (dir.x < -0.9) arrowGroup.rotation.y = -Math.PI / 2;
                 else if (dir.y > 0.9) arrowGroup.rotation.x = -Math.PI / 2;
@@ -363,31 +362,31 @@ def build_embedded_viewport(payload):
             let initialIntersectionPoint = new THREE.Vector3();
             let dragPlane = new THREE.Plane();
 
-            // Handle hover highlighting
+            // Handle hover and mouse dragging calculations
             window.addEventListener('mousemove', (e) => {
                 const rect = renderer.domElement.getBoundingClientRect();
                 mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
                 mouseVec.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
                 if (isDraggingGizmo && activeDragAxis) {
-                    // Continuous Drag Evaluation Math
+                    // Raycast plane intersection calculations
                     raycaster.setFromCamera(mouseVec, camera);
                     const currentIntersection = new THREE.Vector3();
                     raycaster.ray.intersectPlane(dragPlane, currentIntersection);
                     
-                    // Project intersection difference onto the active vector line
+                    // Project distance offset along the designated axis vector line
                     const totalMoveDelta = new THREE.Vector3().subVectors(currentIntersection, initialIntersectionPoint);
                     const axisVector = activeDragAxis.userData.direction.clone();
                     const scalarProjection = totalMoveDelta.dot(axisVector);
                     
-                    // Create dynamic candidate translation target
+                    // Translate candidate endpoint
                     const targetTcp = initialTcpWorldPos.clone().add(axisVector.multiplyScalar(scalarProjection));
                     
-                    // Run real-time client-side Inverse Kinematics loop
+                    // Solve inverse kinematics on the pointer coordinates
                     let candidateAngles = solveIKDelta(targetTcp);
-                    candidateAngles[7] = localJointAngles[7]; // Retain track rail constant
+                    candidateAngles[7] = localJointAngles[7]; // Retain external track axis alignment
                     
-                    // Run strict ground clearance check before updating posture
+                    // Commit structural updates if safe
                     validateAndCommitMovement(candidateAngles);
                     return;
                 }
@@ -412,17 +411,17 @@ def build_embedded_viewport(payload):
                 }
             });
 
-            // Handle Drag Mouse Down Action
+            // Handle Drag Mouse Down Activation
             window.addEventListener('mousedown', (e) => {
                 if (hoveredAxis && activeMode === 'tcp' && !runSimulation) {
                     isDraggingGizmo = true;
                     activeDragAxis = hoveredAxis;
-                    controls.enabled = false; // Disable Orbit Controls while dragging
+                    controls.enabled = false; // Freeze viewport camera rotations while transforming
 
                     let currentTransforms = computeForwardKinematics(localJointAngles);
                     initialTcpWorldPos.copy(getTcpWorldPosition(currentTransforms));
 
-                    // Construct helper calculation projection plane facing the active camera viewport
+                    // Construct target projection calculation plane facing the active camera lens vector
                     raycaster.setFromCamera(mouseVec, camera);
                     const cameraNormal = new THREE.Vector3();
                     camera.getWorldDirection(cameraNormal);
@@ -433,12 +432,12 @@ def build_embedded_viewport(payload):
                 }
             });
 
-            // Handle Drag Release Action
+            // Handle Drag Mouse Up Deactivation
             window.addEventListener('mouseup', () => {
                 if (isDraggingGizmo) {
                     isDraggingGizmo = false;
                     activeDragAxis = null;
-                    controls.enabled = true; // Restore camera controls
+                    controls.enabled = true; // Unfreeze camera pan/zoom controls
                     document.body.style.cursor = 'default';
                     resetGizmoColors();
                 }
@@ -598,6 +597,7 @@ def build_embedded_viewport(payload):
                 return tcpPos;
             }
 
+            // Client-Side Jacobian Numerical Inverse Kinematics Engine
             function solveIKDelta(targetGlobalTcp) {
                 let currentAngles = [...localJointAngles];
                 let maxIterations = 15;
@@ -712,14 +712,12 @@ def build_embedded_viewport(payload):
                 } else {
                     gizmoGroup.visible = true; 
                     const axLabels = ['X', 'Y', 'Z'];
-                    axLabels.forEach((axis, idx) => {
+                    axLabels.forEach((axis) => {
                         const row = document.createElement('div');
                         row.className = 'jog-row';
                         row.innerHTML = `
-                            <button class="jog-btn" onclick="jogCartesian('${axis}', -1)">-</button>
-                            <div class="jog-label">${axis}</div>
-                            <div class="val-display" id="val-tcp-${axis}">0.00m</div>
-                            <button class="jog-btn" onclick="jogCartesian('${axis}', 1)">+</button>
+                            <div style="font-size: 11px; color:#aaa;">Axis Position ${axis}:</div>
+                            <div class="val-display" id="val-tcp-${axis}" style="font-weight:bold; width:100px; text-align:right; padding-right:10px;">0.00m</div>
                         `;
                         panel.appendChild(row);
                     });
@@ -762,20 +760,6 @@ def build_embedded_viewport(payload):
                 let candidate = [...localJointAngles];
                 candidate[jointIdx] += direction * J_STEP;
                 validateAndCommitMovement(candidate);
-            };
-
-            window.jogCartesian = function(axis, direction) {
-                if(runSimulation) return;
-                let currentTransforms = computeForwardKinematics(localJointAngles);
-                let targetTcp = getTcpWorldPosition(currentTransforms);
-                
-                if(axis === 'X') targetTcp.x += direction * L_STEP;
-                if(axis === 'Y') targetTcp.y += direction * L_STEP;
-                if(axis === 'Z') targetTcp.z += direction * L_STEP;
-                
-                let candidateAngles = solveIKDelta(targetTcp);
-                candidateAngles[7] = localJointAngles[7]; 
-                validateAndCommitMovement(candidateAngles);
             };
 
             document.getElementById('mode-joint').addEventListener('click', () => {
