@@ -15,6 +15,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Define the Structured Robot Tools Directory Environment matching your folder names
+TOOLS_DIR = os.path.join(BASE_DIR, "assets", "robot_tools")
+SUB_TOOL_TYPES = ["welding_guns", "grippers", "welding_tourch"]
+for sub_type in SUB_TOOL_TYPES:
+    os.makedirs(os.path.join(TOOLS_DIR, sub_type), exist_ok=True)
+
 if 'j_angles' not in st.session_state:
     st.session_state.j_angles = [0.0] * 8 
 if 'program' not in st.session_state:
@@ -144,6 +150,13 @@ def get_file_hash(filepath):
         return str(os.path.getmtime(filepath))
     return ""
 
+# Helper to look into active asset category folders
+def get_available_tools(category):
+    cat_dir = os.path.join(TOOLS_DIR, category)
+    if os.path.exists(cat_dir):
+        return [f for f in os.listdir(cat_dir) if f.lower().endswith('.stl')]
+    return []
+
 # --- 5. EVENT PARAMETER INTERCEPT LAYER ---
 query_params = st.query_params
 if "event" in query_params:
@@ -164,7 +177,7 @@ if "event" in query_params:
 # --- 6. OPERATOR INTERFACE CONTROLS ---
 with st.sidebar:
     with st.expander("🛠️ Layout Setup", expanded=False):
-        if st.button("🔴 RESET TOOL & JIG", use_container_width=True):
+        if st.button("🔴 RESET GUN & JIG", use_container_width=True):
             for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
                 if os.path.exists(f):
                     try: os.remove(f)
@@ -177,19 +190,56 @@ with st.sidebar:
             st.rerun()
             
         st.divider()
-        st.write("**🔫 Robot Tooling**")
-        up_gun = st.file_uploader("Upload Tool STL", type=["stl"], key="gun_up")
+        st.write("**⚙️ End-Effector Tooling Library**")
+        
+        # 1. Choose Tool Family Category
+        tool_category = st.selectbox(
+            "Select Tool Category Type",
+            options=["Welding Guns", "Grippers", "Welding Torches"]
+        )
+        category_mapping = {
+            "Welding Guns": "welding_guns",
+            "Grippers": "grippers",
+            "Welding Torches": "welding_tourch"  # Maps 'Welding Torches' to your exact 'welding_tourch' directory
+        }
+        selected_cat_folder = category_mapping[tool_category]
+        
+        # 2. Dynamic Scanning of specific Tool folder
+        scanned_stls = get_available_tools(selected_cat_folder)
+        
+        selected_built_in_tool = None
+        if scanned_stls:
+            selected_built_in_tool = st.selectbox(
+                f"Choose Available {tool_category}",
+                options=["None / Custom Upload"] + scanned_stls
+            )
+        else:
+            st.caption(f"No library files found in `assets/robot_tools/{selected_cat_folder}/`")
+
+        # 3. Handle Hybrid Logic (File Upload always maintains Priority if specified)
+        up_gun = st.file_uploader("Upload Custom External STL Tool", type=["stl"], key="gun_up")
+        
+        path_gun = os.path.join(TEMP_DIR, "gun.stl")
+        
         if up_gun:
-            with open(os.path.join(TEMP_DIR, "gun.stl"), "wb") as f: 
+            # User uploaded an external custom model -> write over temp path
+            with open(path_gun, "wb") as f: 
                 f.write(up_gun.getbuffer())
+            st.cache_data.clear()
+        elif selected_built_in_tool and selected_built_in_tool != "None / Custom Upload":
+            # User picked an internal model from the dynamic directories -> mirror to active temp runtime
+            src_library_file = os.path.join(TOOLS_DIR, selected_cat_folder, selected_built_in_tool)
+            with open(src_library_file, "rb") as sf:
+                with open(path_gun, "wb") as df:
+                    df.write(sf.read())
             st.cache_data.clear()
         
         # Expanded Tool Calibration Sliders (X, Y, Z Offsets)
-        g_off_x = st.slider("Tool Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
-        g_off_y = st.slider("Tool Offset Y", -0.5, 0.5, 0.0, step=0.01)
-        g_off_z = st.slider("Tool Offset Z", -0.5, 0.5, 0.0, step=0.01)
-        g_rot_y = st.slider("Tool Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
-        g_rot_z = st.slider("Tool Twist Orientation (Z-Axis Rot)", -180, 180, 0, step=5)
+        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
+        g_off_y = st.slider("Gun Offset Y", -0.5, 0.5, 0.0, step=0.01)
+        g_off_z = st.slider("Gun Offset Z", -0.5, 0.5, 0.0, step=0.01)
+        g_rot_y = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
+        g_rot_z = st.slider("Gun Twist Orientation (Z-Axis Rot)", -180, 180, 0, step=5)
         
         st.divider()
         st.write("**🏗️ Rotary Positioning Jig**")
@@ -531,7 +581,7 @@ def build_embedded_viewport(payload):
                         let axisVectorDirection = new THREE.Vector3(0, 0, 1);
                         if (j === 2 || j === 3) axisVectorDirection.set(0, 1, 0);
 
-                        let componentToEE = new THREE.Vector3().subVectors(endEffectorPos, jointPosition).normalize();
+                        let component ToEE = new THREE.Vector3().subVectors(endEffectorPos, jointPosition).normalize();
                         let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
 
                         let angleScalarDot = componentToEE.dot(componentToTarget);
@@ -594,7 +644,6 @@ def build_embedded_viewport(payload):
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
-                    // Unified Multi-Axis Local FLange Translation Control
                     gunMesh.translateX(data.gunOffsetX);
                     gunMesh.translateY(data.gunOffsetY);
                     gunMesh.translateZ(data.gunOffsetZ);
