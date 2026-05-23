@@ -404,7 +404,7 @@ def build_embedded_viewport(payload):
             if(data.gunData && data.gunData.length > 0) {
                 const geometry = loader.parse(base64ToArrayBuffer(data.gunData));
                 geometry.center(); 
-                geometry.rotateY(Math.PI / 2);
+                // AXIS OFFSET CORRECTION: Removed pre-rotation geometry block to resolve X/Z interchange error
                 const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
                 gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
                 toolAdjustmentGroup.add(gunInternalMesh);
@@ -525,6 +525,7 @@ def build_embedded_viewport(payload):
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
+                    // AXIS FIX: True local coordinate system transformations mapping X to X, Y to Y, Z to Z
                     gunMesh.translateX(data.toolOffsetX);
                     gunMesh.translateY(data.toolOffsetY);
                     gunMesh.translateZ(data.toolOffsetZ);
