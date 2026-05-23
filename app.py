@@ -180,31 +180,30 @@ with st.sidebar:
 
     # --- 6B. END-EFFECTOR TOOLING LIBRARY CONTROL PANEL ---
     with st.expander("⚙️ End-Effector Tooling Library", expanded=True):
-        CATEGORY_MAPPING = {
-            "Welding Guns": "welding_guns",
-            "Grippers": "grippers",
-            "Welding Torches": "welding_torches"
-        }
-        
-        selected_category = st.selectbox(
-            "Select Tool Category Type",
-            options=list(CATEGORY_MAPPING.keys())
-        )
-        
-        folder_target_name = CATEGORY_MAPPING[selected_category]
-        library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", folder_target_name)
-        
+        tool_source = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"])
         selected_tool_path = None
-        available_tools = []
-        
-        if os.path.exists(library_scan_path):
-            available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
+
+        if tool_source == "Internal Library":
+            CATEGORY_MAPPING = {
+                "Welding Guns": "welding_guns",
+                "Grippers": "grippers",
+                "Welding Torches": "welding_torches"
+            }
+            selected_category = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()))
+            folder_target_name = CATEGORY_MAPPING[selected_category]
+            library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", folder_target_name)
             
-        if available_tools:
-            selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
-            selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
+            available_tools = []
+            if os.path.exists(library_scan_path):
+                available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
+                
+            if available_tools:
+                selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
+                selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
+            else:
+                st.caption("⚠️ No internal library templates found. Please use upload mode.")
         else:
-            up_gun = st.file_uploader("Or Upload Custom Tool STL", type=["stl"], key="gun_up")
+            up_gun = st.file_uploader("Upload Custom External Tool STL", type=["stl"], key="gun_up")
             if up_gun:
                 selected_tool_path = os.path.join(TEMP_DIR, "gun.stl")
                 with open(selected_tool_path, "wb") as f: 
@@ -364,11 +363,7 @@ def build_embedded_viewport(payload):
 
             transformGizmo.addEventListener('objectChange', function () {
                 if (activeJogMode !== "tcp" || runSimulation) return;
-                
-                // FORCE TRACKING TARGET Z PROTECTION LIMIT (STOPS HANDLES GOING SUBTERRANEAN)
-                if (tcpAnchorPivot.position.z < 0.0) {
-                    tcpAnchorPivot.position.z = 0.0;
-                }
+                if (tcpAnchorPivot.position.z < 0.0) { tcpAnchorPivot.position.z = 0.0; }
                 executeCyclicInverseKinematics(tcpAnchorPivot.position);
             });
 
@@ -478,8 +473,6 @@ def build_embedded_viewport(payload):
                 
                 for (let iteration = 0; iteration < 8; iteration++) {
                     let currentTransforms = computeForwardKinematics(localJointAngles);
-                    
-                    // TARGET LOCK: TCP IS PERMANENTLY BONDED TO THE JOINT 6 FLANGE FLANGE CENTER (INDEX 6)
                     let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
                     if (errorDistance.length() < 0.0005) break;
@@ -503,14 +496,10 @@ def build_embedded_viewport(payload):
                     }
                 }
 
-                // --- REQUIRED FLOOR PROTECTION CHECK ---
                 let evaluatedTransforms = computeForwardKinematics(localJointAngles);
                 let floorBreachDetected = false;
                 for (let k = 0; k < evaluatedTransforms.length; k++) {
-                    if (evaluatedTransforms[k].pos[2] < -0.001) { 
-                        floorBreachDetected = true;
-                        break;
-                    }
+                    if (evaluatedTransforms[k].pos[2] < -0.001) { floorBreachDetected = true; break; }
                 }
 
                 if (floorBreachDetected) {
@@ -533,8 +522,6 @@ def build_embedded_viewport(payload):
                 }
                 if(links[6]) {
                     links[6].updateMatrixWorld();
-                    
-                    // --- REQUIREMENT 2: ROBOT JOINT 6 CENTERLINE PINNED POSITIONING MATRIX ---
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
@@ -605,13 +592,9 @@ def build_embedded_viewport(payload):
                 let originalAngleValue = localJointAngles[jointIdx];
                 localJointAngles[jointIdx] += direction * J_STEP;
                 
-                // CRITICAL INTERCEPT FOR MANUAL JOG COORDS AS WELL
                 let checkedTransforms = computeForwardKinematics(localJointAngles);
                 for (let k = 0; k < checkedTransforms.length; k++) {
-                    if (checkedTransforms[k].pos[2] < 0.0) {
-                        localJointAngles[jointIdx] = originalAngleValue; 
-                        break;
-                    }
+                    if (checkedTransforms[k].pos[2] < 0.0) { localJointAngles[jointIdx] = originalAngleValue; break; }
                 }
                 refreshSceneDisplay(true);
             }
