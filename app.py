@@ -105,7 +105,7 @@ def build_robot_chain(profile_name, hardware_config):
     return Chain(name=profile_name, links=[
         OriginLink(),
         URDFLink(name=links_data[0]["name"], origin_translation=links_data[0]["trans"], origin_orientation=links_data[0]["orient"], rotation=links_data[0]["rot"]),
-        URDFLink(name=links_data[1]["name"], origin_translation=links_data[1]["trans"], origin_orientation=links_data[1]["rot"]),
+        URDFLink(name=links_data[1]["name"], origin_translation=links_data[1]["trans"], origin_orientation=links_data[1]["orient"], rotation=links_data[1]["rot"]),
         URDFLink(name=links_data[2]["name"], origin_translation=links_data[2]["trans"], origin_orientation=links_data[2]["orient"], rotation=links_data[2]["rot"]),
         URDFLink(name=links_data[3]["name"], origin_translation=links_data[3]["trans"], origin_orientation=links_data[3]["orient"], rotation=links_data[3]["rot"]),
         URDFLink(name=links_data[4]["name"], origin_translation=links_data[4]["trans"], origin_orientation=links_data[4]["orient"], rotation=links_data[4]["rot"]),
@@ -223,7 +223,6 @@ with st.sidebar:
         t_rot_y = st.slider("Rotate Y Axis (Pitch)", -180, 180, 0, step=5)
         t_rot_z = st.slider("Rotate Z Axis (Yaw)", -180, 180, 0, step=5)
 
-# Safety parameter fallback
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
 if 'jz_pos' not in locals(): jz_pos = 0.55
@@ -504,18 +503,17 @@ def build_embedded_viewport(payload):
                     }
                 }
 
-                // --- REQUIREMENT 1: CRITICAL GEOMETRIC Z-AXIS FLOOR CONSTRAINT INTERCEPT ---
+                // --- REQUIRED FLOOR PROTECTION CHECK ---
                 let evaluatedTransforms = computeForwardKinematics(localJointAngles);
                 let floorBreachDetected = false;
                 for (let k = 0; k < evaluatedTransforms.length; k++) {
-                    if (evaluatedTransforms[k].pos[2] < -0.001) { // Tolerate floating point noise down to -1mm
+                    if (evaluatedTransforms[k].pos[2] < -0.001) { 
                         floorBreachDetected = true;
                         break;
                     }
                 }
 
                 if (floorBreachDetected) {
-                    // Revert calculation cycle immediately if floor breach condition is matched
                     localJointAngles = [...savedAnglesBackup];
                     let originalValidTransforms = computeForwardKinematics(localJointAngles);
                     tcpAnchorPivot.position.fromArray(originalValidTransforms[6].pos);
@@ -540,7 +538,6 @@ def build_embedded_viewport(payload):
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
-                    // Render tool transforms without shifting the mechanical joint pivot point tracking
                     gunMesh.translateX(data.toolOffsetX);
                     gunMesh.translateY(data.toolOffsetY);
                     gunMesh.translateZ(data.toolOffsetZ);
@@ -612,7 +609,7 @@ def build_embedded_viewport(payload):
                 let checkedTransforms = computeForwardKinematics(localJointAngles);
                 for (let k = 0; k < checkedTransforms.length; k++) {
                     if (checkedTransforms[k].pos[2] < 0.0) {
-                        localJointAngles[jointIdx] = originalAngleValue; // Reset back
+                        localJointAngles[jointIdx] = originalAngleValue; 
                         break;
                     }
                 }
