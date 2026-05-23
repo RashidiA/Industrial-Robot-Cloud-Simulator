@@ -126,7 +126,7 @@ ROBOT_REGISTRY = {
 
 # --- 3. SELECTION INITIALIZATION LAYER ---
 with st.sidebar:
-    st.title("📟 Teach Pendant Pro")
+    st.title("📟 Simulation Setup")
     with st.expander("🛠️ Layout Setup", expanded=True):
         robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
         available_profiles = list(ROBOT_REGISTRY.keys())
@@ -195,7 +195,7 @@ if "event" in query_params:
 # --- 6. OPERATOR INTERFACE CONTROLS ---
 with st.sidebar:
     with st.expander("🛠️ Layout Setup", expanded=False):
-        if st.button("🔴 RESET GUN & JIG", use_container_width=True):
+        if st.button("🔴 RESET TOOL & JIG", use_container_width=True):
             for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
                 if os.path.exists(f):
                     try: os.remove(f)
@@ -259,14 +259,14 @@ with st.sidebar:
         st.divider()
         st.write("**📐 6-Axis Tool Center Point (TCP) Offsets**")
         col_ox, col_oy, col_oz = st.columns(3)
-        with col_ox: t_off_x = st.number_input("Offset X", value=0.00, step=0.05, format="%.2f")
+        with col_ox: t_off_x = st.number_input("Offset Z", value=0.00, step=0.05, format="%.2f")
         with col_oy: t_off_y = st.number_input("Offset Y", value=0.00, step=0.05, format="%.2f")
-        with col_oz: t_off_z = st.number_input("Offset Z", value=0.00, step=0.05, format="%.2f")
+        with col_oz: t_off_z = st.number_input("Offset X", value=0.00, step=0.05, format="%.2f")
         
         st.write("**🔄 Tool Mounting Matrix Rotations (Degrees)**")
-        t_rot_x = st.slider("Rotate X Axis (Roll)", -180, 180, 0, step=5)
+        t_rot_x = st.slider("Rotate Z Axis (Roll)", -180, 180, 0, step=5)
         t_rot_y = st.slider("Rotate Y Axis (Pitch)", -180, 180, 0, step=5)
-        t_rot_z = st.slider("Rotate Z Axis (Yaw)", -180, 180, 0, step=5)
+        t_rot_z = st.slider("Rotate X Axis (Yaw)", -180, 180, 0, step=5)
 
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
