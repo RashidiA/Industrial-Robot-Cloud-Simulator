@@ -15,13 +15,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Initialize critical session states safely
 if 'j_angles' not in st.session_state:
     st.session_state.j_angles = [0.0] * 8 
 if 'program' not in st.session_state:
     st.session_state.program = []
-if 'selected_profile' not in st.session_state:
-    st.session_state.selected_profile = "ABB_6700"
 
 # --- 2. MULTI-ROBOT KINEMATICS REGISTRY ---
 ROBOT_REGISTRY = {
@@ -82,17 +79,9 @@ ROBOT_REGISTRY = {
     }
 }
 
-# Callback to cleanly handle profile swapping and update session states directly
-def on_profile_change():
-    st.session_state.selected_profile = st.session_state.robot_profile_selection
-    # Reset joints to neutral to prevent rendering visual anomalies during load transitions
-    st.session_state.j_angles = [0.0] * 8
-    st.session_state.program = []
-
-# --- 3. UNIFIED SIDEBAR OPERATOR INTERFACE ---
+# --- 3. SELECTION INITIALIZATION LAYER ---
 with st.sidebar:
     st.title("📟 Teach Pendant Pro")
-    
     with st.expander("🛠️ Layout Setup", expanded=True):
         robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
         available_profiles = list(ROBOT_REGISTRY.keys())
@@ -102,16 +91,65 @@ with st.sidebar:
             if scanned_folders:
                 available_profiles = sorted(list(set(scanned_folders + available_profiles)))
 
-        # Single master dropdown selector with dynamic callbacks
         selected_profile = st.selectbox(
             "Select Active Hardware Profile", 
             options=available_profiles,
-            index=available_profiles.index(st.session_state.selected_profile) if st.session_state.selected_profile in available_profiles else 0,
-            key="robot_profile_selection",
-            on_change=on_profile_change
+            key="robot_profile_selection"
         )
 
-        st.divider()
+active_cfg = ROBOT_REGISTRY.get(selected_profile, ROBOT_REGISTRY["ABB_6700"])
+
+# --- 4. CONFIGURATION ADJUSTED KINEMATICS ENGINE ---
+@st.cache_resource
+def build_robot_chain(profile_name, hardware_config):
+    links_data = hardware_config["links"]
+    return Chain(name=profile_name, links=[
+        OriginLink(),
+        URDFLink(name=links_data[0]["name"], origin_translation=links_data[0]["trans"], origin_orientation=links_data[0]["orient"], rotation=links_data[0]["rot"]),
+        URDFLink(name=links_data[1]["name"], origin_translation=links_data[1]["trans"], origin_orientation=links_data[1]["orient"], rotation=links_data[1]["rot"]),
+        URDFLink(name=links_data[2]["name"], origin_translation=links_data[2]["trans"], origin_orientation=links_data[2]["orient"], rotation=links_data[2]["rot"]),
+        URDFLink(name=links_data[3]["name"], origin_translation=links_data[3]["trans"], origin_orientation=links_data[3]["orient"], rotation=links_data[3]["rot"]),
+        URDFLink(name=links_data[4]["name"], origin_translation=links_data[4]["trans"], origin_orientation=links_data[4]["orient"], rotation=links_data[4]["rot"]),
+        URDFLink(name=links_data[5]["name"], origin_translation=links_data[5]["trans"], origin_orientation=links_data[5]["orient"], rotation=links_data[5]["rot"]),
+    ], active_links_mask=[False, True, True, True, True, True, True])
+
+robot_chain = build_robot_chain(selected_profile, active_cfg)
+
+@st.cache_data(show_spinner=False)
+def get_file_base64_cached(filepath, file_hash=""):
+    if filepath and os.path.exists(filepath):
+        try:
+            with open(filepath, "rb") as f:
+                return base64.b64encode(f.read()).decode('utf-8')
+        except Exception:
+            return ""
+    return ""
+
+def get_file_hash(filepath):
+    if filepath and os.path.exists(filepath):
+        return str(os.path.getmtime(filepath))
+    return ""
+
+# --- 5. EVENT PARAMETER INTERCEPT LAYER ---
+query_params = st.query_params
+if "event" in query_params:
+    event_type = query_params.get("event")
+    if event_type == "sync_sequence":
+        try:
+            raw_program = json.loads(query_params.get("program_data", "[]"))
+            st.session_state.program = raw_program
+            if len(raw_program) > 0:
+                st.session_state.j_angles = raw_program[-1]["angles"]
+        except Exception as e:
+            st.error(f"Pendant sync failure: {e}")
+    elif event_type == "clear_sequence":
+        st.session_state.program = []
+        st.session_state.j_angles = [0.0] * 8
+    st.query_params.clear()
+
+# --- 6. OPERATOR INTERFACE CONTROLS & END-EFFECTOR LIBRARY ---
+with st.sidebar:
+    with st.expander("🛠️ Layout Setup", expanded=False):
         if st.button("🔴 RESET GUN & JIG", use_container_width=True):
             for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
                 if os.path.exists(f):
@@ -124,17 +162,6 @@ with st.sidebar:
             st.query_params.clear()
             st.rerun()
             
-        st.divider()
-        st.write("**🔫 Welding Gun Tooling**")
-        up_gun = st.file_uploader("Upload Gun STL", type=["stl"], key="gun_up")
-        if up_gun:
-            with open(os.path.join(TEMP_DIR, "gun.stl"), "wb") as f: 
-                f.write(up_gun.getbuffer())
-            st.cache_data.clear()
-        
-        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
-        g_rot_z = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
-        
         st.divider()
         st.write("**🏗️ Rotary Positioning Jig**")
         up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
@@ -152,99 +179,56 @@ with st.sidebar:
         j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
-    # --- END-EFFECTOR TOOLING LIBRARY ---
+    # --- NEW: DETAILED END-EFFECTOR TOOLING LIBRARY CONTROL PANEL ---
     with st.expander("⚙️ End-Effector Tooling Library", expanded=True):
-        tool_category = st.selectbox(
-            "Select Tool Category Type",
-            options=["Grippers", "Welding Guns", "Welding Torches"], # Fixed spelling from "Welding Tourches"
-            key="tool_category_selection"
-        )
-        
-        # Safe structural matching to find your repository tool folders
-        category_folder_map = {
+        # Dictionary routing categories to actual physical folder directories on disk
+        CATEGORY_MAPPING = {
             "Grippers": "grippers",
             "Welding Guns": "welding_guns",
-            "Welding Torches": "welding_torches" # Matches folder path perfectly
+            "Welding Torches": "welding_torches"
         }
         
-        mapped_folder = category_folder_map[tool_category]
-        library_path = os.path.join(BASE_DIR, "assets", "robot_tools", mapped_folder)
+        selected_category = st.selectbox(
+            "Select Tool Category Type",
+            options=list(CATEGORY_MAPPING.keys())
+        )
         
-        if os.path.exists(library_path):
-            tool_files = [f for f in os.listdir(library_path) if f.endswith(".stl")]
-            if tool_files:
-                selected_tool_file = st.selectbox("Select Tooling Model", options=tool_files)
-            else:
-                st.caption(f"No library files found in `assets/robot_tools/{mapped_folder}/`")
+        # Build direct absolute target structural scan path
+        folder_target_name = CATEGORY_MAPPING[selected_category]
+        library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", folder_target_name)
+        
+        selected_tool_path = None
+        available_tools = []
+        
+        if os.path.exists(library_scan_path):
+            available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
+            
+        if available_tools:
+            selected_tool_file = st.selectbox(
+                "Select Tooling Model",
+                options=available_tools
+            )
+            selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
         else:
-            st.caption(f"Directory missing: `assets/robot_tools/{mapped_folder}/`")
+            st.caption(f"No library files found in:\n`assets/robot_tools/{folder_target_name}/`")
+            
+        st.divider()
+        st.write("**📐 Tool Center Point (TCP) Offset**")
+        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
+        g_rot_z = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
 
-active_cfg = ROBOT_REGISTRY.get(st.session_state.selected_profile, ROBOT_REGISTRY["ABB_6700"])
+# Set defaults to safeguard tracking loops if layout panels aren't read yet
+if 'g_off_x' not in locals(): g_off_x = 0.0
+if 'g_rot_z' not in locals(): g_rot_z = 180
+if 'jx_pos' not in locals(): jx_pos = 1.6
+if 'jy_pos' not in locals(): jy_pos = 0.0
+if 'jz_pos' not in locals(): jz_pos = 0.55
+if 'j_rot_x' not in locals(): j_rot_x = 0
+if 'j_rot_y' not in locals(): j_rot_y = 0
+if 'js_scale' not in locals(): js_scale = 0.001
 
-# --- 4. KINEMATICS COMPUTATION ENGINE ---
-@st.cache_resource
-def build_robot_chain(profile_name, hardware_config):
-    links_data = hardware_config["links"]
-    return Chain(name=profile_name, links=[
-        OriginLink(),
-        URDFLink(name=links_data[0]["name"], origin_translation=links_data[0]["trans"], origin_orientation=links_data[0]["orient"], rotation=links_data[0]["rot"]),
-        URDFLink(name=links_data[1]["name"], origin_translation=links_data[1]["trans"], origin_orientation=links_data[1]["orient"], rotation=links_data[1]["rot"]),
-        URDFLink(name=links_data[2]["name"], origin_translation=links_data[2]["trans"], origin_orientation=links_data[2]["orient"], rotation=links_data[2]["rot"]),
-        URDFLink(name=links_data[3]["name"], origin_translation=links_data[3]["trans"], origin_orientation=links_data[3]["orient"], rotation=links_data[3]["rot"]),
-        URDFLink(name=links_data[4]["name"], origin_translation=links_data[4]["trans"], origin_orientation=links_data[4]["orient"], rotation=links_data[4]["rot"]),
-        URDFLink(name=links_data[5]["name"], origin_translation=links_data[5]["trans"], origin_orientation=links_data[5]["orient"], rotation=links_data[5]["rot"]),
-    ], active_links_mask=[False, True, True, True, True, True, True])
-
-robot_chain = build_robot_chain(st.session_state.selected_profile, active_cfg)
-
-# [The remaining build_embedded_viewport, Base64 loader, and payload delivery logic follows below...]
-def get_link_transforms(angles):
-    matrices = robot_chain.forward_kinematics(angles[:7], full_kinematics=True)
-    transforms = []
-    for i, m in enumerate(matrices):
-        pos_val = m[:3, 3].tolist()
-        if i == 4:
-            m_corr = m.copy()
-            m_corr[:3, 3] += m_corr[:3, 0] * -1.0
-            pos_val = m_corr[:3, 3].tolist()
-        rot_matrix = m[:3, :3]
-        quat = R.from_matrix(rot_matrix).as_quat().tolist()
-        transforms.append({"pos": pos_val, "quat": quat})
-    return transforms
-
-@st.cache_data(show_spinner=False)
-def get_file_base64_cached(filepath, file_hash=""):
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, "rb") as f:
-                return base64.b64encode(f.read()).decode('utf-8')
-        except Exception:
-            return ""
-    return ""
-
-def get_file_hash(filepath):
-    if os.path.exists(filepath):
-        return str(os.path.getmtime(filepath))
-    return ""
-
-# --- 5. EVENT INTERCEPT LAYER ---
-query_params = st.query_params
-if "event" in query_params:
-    event_type = query_params.get("event")
-    if event_type == "sync_sequence":
-        try:
-            raw_program = json.loads(query_params.get("program_data", "[]"))
-            st.session_state.program = raw_program
-            if len(raw_program) > 0:
-                st.session_state.j_angles = raw_program[-1]["angles"]
-        except Exception as e:
-            st.error(f"Pendant sync failure: {e}")
-    elif event_type == "clear_sequence":
-        st.session_state.program = []
-        st.session_state.j_angles = [0.0] * 8
-    st.query_params.clear()
-
-# --- 6. VIRTUAL WEBGL SIMULATOR VIEWPORT ---
+# --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT ---
+# (Kept identical to ensure original Three.js inverse/rendering loops function cleanly)
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -448,75 +432,41 @@ def build_embedded_viewport(payload):
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
-                
-                computedTransforms.push({
-                    pos: new THREE.Vector3(0,0,0).toArray(),
-                    quat: new THREE.Quaternion().toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3(0,0,0).toArray(), quat: new THREE.Quaternion().toArray() });
 
-                let m1 = getLinkStructureBaseMatrix(dh[0]);
-                m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
+                let m1 = getLinkStructureBaseMatrix(dh[0]).multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
                 currentMatrix.multiply(m1);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                let m2 = getLinkStructureBaseMatrix(dh[1]);
-                m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
+                let m2 = getLinkStructureBaseMatrix(dh[1]).multiply(new THREE.Matrix4().makeRotationY(angles[2]));
                 currentMatrix.multiply(m2);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                let m3 = getLinkStructureBaseMatrix(dh[2]);
-                m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+                let m3 = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
                 currentMatrix.multiply(m3);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                let m4 = getLinkStructureBaseMatrix(dh[3]);
-                m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
+                let m4 = getLinkStructureBaseMatrix(dh[3]).multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
                 
                 if (data.profileName === "Yaskawa_3500") {
-                    computedTransforms.push({
-                        pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                        quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                    });
+                    computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
                 } else {
                     let correctionMatrix = currentMatrix.clone();
-                    let dirVec = new THREE.Vector3(1, 0, 0);
-                    let directionVector = dirVec.applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
+                    let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
                     let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
-                    computedTransforms.push({
-                        pos: fixedPos.toArray(),
-                        quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                    });
+                    computedTransforms.push({ pos: fixedPos.toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
                 }
 
-                let m5 = getLinkStructureBaseMatrix(dh[4]);
-                m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
+                let m5 = getLinkStructureBaseMatrix(dh[4]).multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                 currentMatrix.multiply(m5);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
                 let m6 = getLinkStructureBaseMatrix(dh[5]);
-                if (data.profileName === "Yaskawa_3500") {
-                    m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6]));
-                } else {
-                    m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
-                }
+                if (data.profileName === "Yaskawa_3500") { m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6])); }
+                else { m6.multiply(new THREE.Matrix4().makeRotationX(angles[6])); }
                 currentMatrix.multiply(m6);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
                 return computedTransforms;
             }
@@ -525,29 +475,23 @@ def build_embedded_viewport(payload):
                 for (let iteration = 0; iteration < 8; iteration++) {
                     let currentTransforms = computeForwardKinematics(localJointAngles);
                     let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
-                    
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
                     if (errorDistance.length() < 0.0005) break;
 
                     for (let j = 1; j <= 3; j++) {
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
-                        
-                        let axisVectorDirection = new THREE.Vector3(0, 0, 1);
-                        if (j === 2 || j === 3) axisVectorDirection.set(0, 1, 0);
+                        let axisVectorDirection = (j === 1) ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
 
                         let componentToEE = new THREE.Vector3().subVectors(endEffectorPos, jointPosition).normalize();
                         let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
 
                         let angleScalarDot = componentToEE.dot(componentToTarget);
-                        let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.15; 
+                        let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.15;
                         
                         if (localizedDeltaTheta > 0.0002) {
                             let directionalCross = new THREE.Vector3().crossVectors(componentToEE, componentToTarget);
-                            if (directionalCross.dot(axisVectorDirection) < 0) {
-                                localJointAngles[j] -= localizedDeltaTheta;
-                            } else {
-                                localJointAngles[j] += localizedDeltaTheta;
-                            }
+                            if (directionalCross.dot(axisVectorDirection) < 0) { localJointAngles[j] -= localizedDeltaTheta; }
+                            else { localJointAngles[j] += localizedDeltaTheta; }
                             localJointAngles[j] = Math.max(-Math.PI, Math.min(Math.PI, localJointAngles[j]));
                         }
                     }
@@ -558,7 +502,6 @@ def build_embedded_viewport(payload):
 
             function refreshSceneDisplay(updateGizmoPosition = true) {
                 lastComputedTransforms = computeForwardKinematics(localJointAngles);
-                
                 for(let i=0; i<7; i++) {
                     if(links[i] && lastComputedTransforms[i]) {
                         links[i].position.fromArray(lastComputedTransforms[i].pos);
@@ -569,12 +512,8 @@ def build_embedded_viewport(payload):
                     links[6].updateMatrixWorld();
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
-                    
-                    if (data.profileName === "Yaskawa_3500") {
-                        gunMesh.translateZ(-data.gunOffset);
-                    } else {
-                        gunMesh.translateX(data.gunOffset);
-                    }
+                    if (data.profileName === "Yaskawa_3500") { gunMesh.translateZ(-data.gunOffset); }
+                    else { gunMesh.translateX(data.gunOffset); }
 
                     if (updateGizmoPosition) {
                         tcpAnchorPivot.position.copy(links[6].position);
@@ -587,9 +526,7 @@ def build_embedded_viewport(payload):
 
                 for(let i=1; i<=7; i++) {
                     let displayElement = document.getElementById(`val-${i}`);
-                    if (displayElement) {
-                        displayElement.innerText = `${(localJointAngles[i] * (180 / Math.PI)).toFixed(1)}°`;
-                    }
+                    if (displayElement) { displayElement.innerText = `${(localJointAngles[i] * (180 / Math.PI)).toFixed(1)}°`; }
                 }
             }
 
@@ -629,14 +566,8 @@ def build_embedded_viewport(payload):
             for(let i=1; i<=6; i++) {
                 const row = document.createElement('div');
                 row.className = 'jog-row';
-                row.innerHTML = `
-                    <button class="jog-btn" id="btn-m-${i}">-</button>
-                    <div class="jog-label">A${i}</div>
-                    <div class="val-display" id="val-${i}">0.0°</div>
-                    <button class="jog-btn" id="btn-p-${i}">+</button>
-                `;
+                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A${i}</div><div class="val-display" id="val-${i}">0.0°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
                 rowsContainer.appendChild(row);
-                
                 (function(idx) {
                     document.getElementById(`btn-m-${idx}`).addEventListener('click', () => jogJoint(idx, -1));
                     document.getElementById(`btn-p-${idx}`).addEventListener('click', () => jogJoint(idx, 1));
@@ -645,15 +576,8 @@ def build_embedded_viewport(payload):
             
             const e1Row = document.createElement('div');
             e1Row.className = 'jog-row';
-            e1Row.style.marginTop = '10px';
-            e1Row.style.borderTop = '1px solid #333';
-            e1Row.style.paddingTop = '8px';
-            e1Row.innerHTML = `
-                <button class="jog-btn" id="btn-m-7">-</button>
-                <div class="jog-label" style="color:#ff9800;">E1</div>
-                <div class="val-display" id="val-7">0.0°</div>
-                <button class="jog-btn" id="btn-p-7">+</button>
-            `;
+            e1Row.style.marginTop = '10px'; e1Row.style.borderTop = '1px solid #333'; e1Row.style.paddingTop = '8px';
+            e1Row.innerHTML = `<button class="jog-btn" id="btn-m-7">-</button><div class="jog-label" style="color:#ff9800;">E1</div><div class="val-display" id="val-7">0.0°</div><button class="jog-btn" id="btn-p-7">+</button>`;
             rowsContainer.appendChild(e1Row);
             document.getElementById('btn-m-7').addEventListener('click', () => jogJoint(7, -1));
             document.getElementById('btn-p-7').addEventListener('click', () => jogJoint(7, 1));
@@ -664,21 +588,13 @@ def build_embedded_viewport(payload):
                 refreshSceneDisplay(true);
             }
 
-            function updateUIElements() {
-                document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
-            }
-
-            document.getElementById('sld-speed').addEventListener('input', (e) => {
-                document.getElementById('val-speed').innerText = e.target.value + "%";
-            });
+            function updateUIElements() { document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length; }
+            document.getElementById('sld-speed').addEventListener('input', (e) => { document.getElementById('val-speed').innerText = e.target.value + "%"; });
 
             document.getElementById('btn-save-step').addEventListener('click', () => {
                 if(runSimulation) return;
                 lastComputedTransforms = computeForwardKinematics(localJointAngles);
-                embeddedTrajectory.push({
-                    angles: [...localJointAngles],
-                    transforms: JSON.parse(JSON.stringify(lastComputedTransforms))
-                });
+                embeddedTrajectory.push({ angles: [...localJointAngles], transforms: JSON.parse(JSON.stringify(lastComputedTransforms)) });
                 updateUIElements();
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "sync_sequence");
@@ -687,26 +603,18 @@ def build_embedded_viewport(payload):
             });
 
             document.getElementById('btn-run-sim').addEventListener('click', () => {
-                if(embeddedTrajectory.length < 2) {
-                    alert("Please record at least 2 structural step points to interpolate trajectory paths.");
-                    return;
-                }
-                simStepIndex = 0;
-                interpolationFraction = 0;
-                runSimulation = true;
+                if(embeddedTrajectory.length < 2) { alert("Please record at least 2 structural step points."); return; }
+                simStepIndex = 0; interpolationFraction = 0; runSimulation = true;
             });
 
             document.getElementById('btn-clear-seq').addEventListener('click', () => {
-                embeddedTrajectory = [];
-                updateUIElements();
+                embeddedTrajectory = []; updateUIElements();
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "clear_sequence");
                 window.parent.location.href = targetUrl.toString();
             });
 
-            let simStepIndex = 0;
-            let interpolationFraction = 0;
-            let runSimulation = false;
+            let simStepIndex = 0; let interpolationFraction = 0; let runSimulation = false;
 
             function animate() {
                 requestAnimationFrame(animate);
@@ -717,36 +625,22 @@ def build_embedded_viewport(payload):
                     document.getElementById('status').innerText = "Status: Running Sequence Simulation";
                     let currentPoint = embeddedTrajectory[simStepIndex];
                     let nextPoint = embeddedTrajectory[simStepIndex + 1];
-
-                    let currentPercent = parseFloat(document.getElementById('sld-speed').value);
-                    let computedStepIncrement = (currentPercent / 100) * 0.04;
+                    let computedStepIncrement = (parseFloat(document.getElementById('sld-speed').value) / 100) * 0.04;
 
                     interpolationFraction += computedStepIncrement;
                     if(interpolationFraction >= 1.0) {
-                        interpolationFraction = 0;
-                        simStepIndex++;
-                        if (simStepIndex >= embeddedTrajectory.length - 1) {
-                            runSimulation = false;
-                            simStepIndex = 0;
-                        }
+                        interpolationFraction = 0; simStepIndex++;
+                        if (simStepIndex >= embeddedTrajectory.length - 1) { runSimulation = false; simStepIndex = 0; }
                     }
 
                     let blendedTransforms = [];
                     for(let i=0; i<7; i++) {
-                        let pV1 = new THREE.Vector3().fromArray(currentPoint.transforms[i].pos);
-                        let pV2 = new THREE.Vector3().fromArray(nextPoint.transforms[i].pos);
-                        let blendedPos = new THREE.Vector3().lerpVectors(pV1, pV2, interpolationFraction).toArray();
-
-                        let qV1 = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat);
-                        let qV2 = new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat);
-                        let blendedQuat = qV1.slerp(qV2, interpolationFraction).toArray();
-
+                        let blendedPos = new THREE.Vector3().lerpVectors(new THREE.Vector3().fromArray(currentPoint.transforms[i].pos), new THREE.Vector3().fromArray(nextPoint.transforms[i].pos), interpolationFraction).toArray();
+                        let blendedQuat = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat).slerp(new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat), interpolationFraction).toArray();
                         blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
                     }
-                    let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
-                    
                     localJointAngles = [...currentPoint.angles]; 
-                    updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
+                    updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, ((1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7]));
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
                     document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
@@ -756,35 +650,21 @@ def build_embedded_viewport(payload):
 
             function updateSceneTransforms(transforms, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
                 for(let i=0; i<7; i++) {
-                    if(links[i] && transforms[i]) {
-                        links[i].position.fromArray(transforms[i].pos);
-                        links[i].quaternion.fromArray(transforms[i].quat);
-                    }
+                    if(links[i] && transforms[i]) { links[i].position.fromArray(transforms[i].pos); links[i].quaternion.fromArray(transforms[i].quat); }
                 }
                 if(links[6]) {
-                    links[6].updateMatrixWorld();
-                    gunMesh.position.copy(links[6].position);
-                    gunMesh.quaternion.copy(links[6].quaternion);
-                    
-                    if (data.profileName === "Yaskawa_3500") {
-                        gunMesh.translateZ(-gunOffset);
-                    } else {
-                        gunMesh.translateX(gunOffset);
-                    }
+                    links[6].updateMatrixWorld(); gunMesh.position.copy(links[6].position); gunMesh.quaternion.copy(links[6].quaternion);
+                    if (data.profileName === "Yaskawa_3500") { gunMesh.translateZ(-gunOffset); } else { gunMesh.translateX(gunOffset); }
                 }
-                jigMesh.position.set(jigX, jigY, jigZ);
-                internalJigContent.rotation.z = e1RotAngle;
+                jigMesh.position.set(jigX, jigY, jigZ); internalJigContent.rotation.z = e1RotAngle;
             }
 
             window.addEventListener('resize', () => {
-                camera.aspect = container.clientWidth / container.clientHeight;
-                camera.updateProjectionMatrix();
+                camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix();
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            refreshSceneDisplay(true);
-            updateUIElements();
-            animate();
+            refreshSceneDisplay(true); updateUIElements(); animate();
         </script>
     </body>
     </html>
@@ -792,28 +672,35 @@ def build_embedded_viewport(payload):
     
     components.html(html_source, height=750, scrolling=False)
 
-# --- 7. DYNAMIC HARDWARE FILE BINDING LAYER ---
-path_gun = os.path.join(TEMP_DIR, "gun.stl")
+# --- 8. DYNAMIC HARDWARE FILE BINDING LAYER ---
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
 link_b64s = []
 for i in range(7):
     mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
-    target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", st.session_state.selected_profile, mesh_filename)
-    
+    target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", selected_profile, mesh_filename)
     if not os.path.exists(target_mesh_path):
         target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
-        
     link_b64s.append(get_file_base64_cached(target_mesh_path))
 
+# Bind library tool base64 payload if paths exist
+tooling_b64 = ""
+if selected_tool_path:
+    tooling_b64 = get_file_base64_cached(selected_tool_path, get_file_hash(selected_tool_path))
+else:
+    # Fallback to manual uploader path if dropdown selection is unconfigured
+    path_gun = os.path.join(TEMP_DIR, "gun.stl")
+    if os.path.exists(path_gun):
+        tooling_b64 = get_file_base64_cached(path_gun, get_file_hash(path_gun))
+
 scene_payload = {
-    "profileName": st.session_state.selected_profile,
+    "profileName": selected_profile,
     "trajectory": st.session_state.program,
     "initialAngles": st.session_state.j_angles,
     "linkGeometries": link_b64s,
     "fallbackHeights": active_cfg["fallback_heights"],
     "dhConfig": active_cfg["links"],
-    "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
+    "gunData": tooling_b64,
     "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
     "gunOffset": g_off_x,
     "gunRotZ": float(g_rot_z) * (np.pi / 180.0),
