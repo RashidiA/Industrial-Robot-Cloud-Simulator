@@ -264,9 +264,9 @@ with st.sidebar:
         with col_oz: t_off_z = st.number_input("Offset X", value=0.00, step=0.05, format="%.2f")
         
         st.write("**🔄 Tool Mounting Matrix Rotations (Degrees)**")
-        t_rot_x = st.slider("Rotate Z Axis (Roll)", -180, 180, 0, step=5)
+        t_rot_x = st.slider("Rotate Z Axis (Yaw)", -180, 180, 0, step=5)
         t_rot_y = st.slider("Rotate Y Axis (Pitch)", -180, 180, 0, step=5)
-        t_rot_z = st.slider("Rotate X Axis (Yaw)", -180, 180, 0, step=5)
+        t_rot_z = st.slider("Rotate X Axis (Roll)", -180, 180, 0, step=5)
 
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
