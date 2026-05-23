@@ -6,7 +6,6 @@ import json
 import base64
 from ikpy.chain import Chain
 from ikpy.link import OriginLink, URDFLink
-from scipy.spatial.transform import Rotation as R
 
 # --- 1. SYSTEM INITIALIZATION ---
 st.set_page_config(page_title="Multi-Robot OLP Pro-Simulator", layout="wide")
@@ -20,8 +19,7 @@ if 'j_angles' not in st.session_state:
 if 'program' not in st.session_state:
     st.session_state.program = []
 
-# --- 2. MULTI-ROBOT KINEMATICS REGISTRY WITH RECOGNIZED INDUSTRY LIMITS (RADIANS) ---
-# Standard industrial joint ranges typically span: A1: ±180°, A2: -60°/+85°, A3: -175°/+70°, A4: ±350°, A5: ±125°, A6: ±350°
+# --- 2. MULTI-ROBOT KINEMATICS REGISTRY WITH INDUSTRY LIMITS (RADIANS) ---
 ROBOT_REGISTRY = {
     "ABB_6700": {
         "links": [
@@ -40,7 +38,7 @@ ROBOT_REGISTRY = {
             [-6.108, 6.108],               # A4: ±350°
             [-2.181, 2.181],               # A5: ±125°
             [-6.108, 6.108],               # A6: ±350°
-            [-np.pi, np.pi]                # E1 Linear/Rotary Jig: ±180°
+            [-np.pi, np.pi]                # E1: ±180°
         ]
     },
     "ABB_4400": {
@@ -141,6 +139,21 @@ def build_robot_chain(profile_name, hardware_config):
 
 robot_chain = build_robot_chain(selected_profile, active_cfg)
 
+@st.cache_data(show_spinner=False)
+def get_file_base64_cached(filepath, file_hash=""):
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "rb") as f:
+                return base64.b64encode(f.read()).decode('utf-8')
+        except Exception:
+            return ""
+    return ""
+
+def get_file_hash(filepath):
+    if os.path.exists(filepath):
+        return str(os.path.getmtime(filepath))
+    return ""
+
 # --- 5. EVENT PARAMETER INTERCEPT LAYER ---
 query_params = st.query_params
 if "event" in query_params:
@@ -174,17 +187,6 @@ with st.sidebar:
             st.rerun()
             
         st.divider()
-        st.write("**🔫 Welding Gun Tooling**")
-        up_gun = st.file_uploader("Upload Gun STL", type=["stl"], key="gun_up")
-        if up_gun:
-            with open(os.path.join(TEMP_DIR, "gun.stl"), "wb") as f: 
-                f.write(up_gun.getbuffer())
-            st.cache_data.clear()
-        
-        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
-        g_rot_z = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
-        
-        st.divider()
         st.write("**🏗️ Rotary Positioning Jig**")
         up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
         if up_jig:
@@ -201,23 +203,50 @@ with st.sidebar:
         j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
-@st.cache_data(show_spinner=False)
-def get_file_base64_cached(filepath, file_hash=""):
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, "rb") as f:
-                return base64.b64encode(f.read()).decode('utf-8')
-        except Exception:
-            return ""
-    return ""
+    # --- 6B. RESTORED END-EFFECTOR TOOLING LIBRARY ---
+    with st.expander("⚙️ End-Effector Tooling Library", expanded=True):
+        tool_source = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"])
+        selected_tool_path = None
 
-def get_file_hash(filepath):
-    if os.path.exists(filepath):
-        return str(os.path.getmtime(filepath))
-    return ""
+        if tool_source == "Internal Library":
+            CATEGORY_MAPPING = {
+                "Welding Guns": "welding_guns",
+                "Grippers": "grippers",
+                "Welding Torches": "welding_torches"
+            }
+            selected_category = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()))
+            folder_target_name = CATEGORY_MAPPING[selected_category]
+            library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", folder_target_name)
+            
+            available_tools = []
+            if os.path.exists(library_scan_path):
+                available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
+                
+            if available_tools:
+                selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
+                selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
+            else:
+                st.caption("⚠️ No internal library templates found. Please upload an external file.")
+        else:
+            up_gun = st.file_uploader("Upload Custom External Tool STL", type=["stl"], key="gun_up")
+            if up_gun:
+                selected_tool_path = os.path.join(TEMP_DIR, "gun.stl")
+                with open(selected_tool_path, "wb") as f: 
+                    f.write(up_gun.getbuffer())
+                st.cache_data.clear()
 
-if 'g_off_x' not in locals(): g_off_x = 0.0
-if 'g_rot_z' not in locals(): g_rot_z = 180
+        st.divider()
+        st.write("**📐 6-Axis Tool Center Point (TCP) Offsets**")
+        col_ox, col_oy, col_oz = st.columns(3)
+        with col_ox: t_off_x = st.number_input("Offset X", value=0.00, step=0.05, format="%.2f")
+        with col_oy: t_off_y = st.number_input("Offset Y", value=0.00, step=0.05, format="%.2f")
+        with col_oz: t_off_z = st.number_input("Offset Z", value=0.00, step=0.05, format="%.2f")
+        
+        st.write("**🔄 Tool Mounting Matrix Rotations (Degrees)**")
+        t_rot_x = st.slider("Rotate X Axis (Roll)", -180, 180, 0, step=5)
+        t_rot_y = st.slider("Rotate Y Axis (Pitch)", -180, 180, 0, step=5)
+        t_rot_z = st.slider("Rotate Z Axis (Yaw)", -180, 180, 0, step=5)
+
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
 if 'jz_pos' not in locals(): jz_pos = 0.55
@@ -269,12 +298,10 @@ def build_embedded_viewport(payload):
         <div id="status">WebGL Processing...</div>
         <div id="jog-pendant">
             <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
-            
             <div class="mode-container">
                 <button id="mode-joint" class="mode-btn active">Joint Jog</button>
                 <button id="mode-tcp" class="mode-btn">⌖ TCP Jog</button>
             </div>
-
             <div id="tcp-monitor">
                 <div style="color: #00ffcc; font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
                 <div class="tcp-grid">
@@ -283,9 +310,7 @@ def build_embedded_viewport(payload):
                     <span style="color:#4444ff">Z:<span id="lbl-tz">0.00</span></span>
                 </div>
             </div>
-            
             <div id="joint-jog-container"></div>
-            
             <div class="action-block">
                 <div class="jog-row" style="margin-bottom: 4px;">
                     <div class="jog-label" style="font-size: 11px; color: #aaa;">SPEED</div>
@@ -309,7 +334,7 @@ def build_embedded_viewport(payload):
             let localJointAngles = [...data.initialAngles];
             let lastComputedTransforms = [];
             let embeddedTrajectory = [...data.trajectory];
-            let activeJogMode = "joint"; 
+            let activeJogMode = "joint";
             
             const J_STEP = 5 * (Math.PI / 180);
 
@@ -347,13 +372,11 @@ def build_embedded_viewport(payload):
             jigMesh.add(internalJigContent);
             scene.add(jigMesh);
 
-            // Create target coordinate frame tracker object for Transform Controls
             const tcpAnchorPivot = new THREE.Object3D();
             scene.add(tcpAnchorPivot);
 
-            // Configure RoboDK-Style 3D interactive manipulation handles
             const transformGizmo = new THREE.TransformControls(camera, renderer.domElement);
-            transformGizmo.size = 0.65; 
+            transformGizmo.size = 0.65;
             transformGizmo.setMode("translate");
             transformGizmo.attach(tcpAnchorPivot);
             transformGizmo.visible = false;
@@ -378,11 +401,8 @@ def build_embedded_viewport(payload):
             }
 
             let targetColor = 0xcccccc; 
-            if (data.profileName === "Yaskawa_3500") {
-                targetColor = 0x0055ff; 
-            } else if (data.profileName === "KUKA_KR150") {
-                targetColor = 0xff6600; 
-            }
+            if (data.profileName === "Yaskawa_3500") { targetColor = 0x0055ff; } 
+            else if (data.profileName === "KUKA_KR150") { targetColor = 0xff6600; }
 
             for(let i=0; i<7; i++) {
                 let mesh;
@@ -403,14 +423,15 @@ def build_embedded_viewport(payload):
                 links.push(mesh);
             }
 
+            let toolAdjustmentGroup = new THREE.Group();
+            gunMesh.add(toolAdjustmentGroup);
+
             if(data.gunData && data.gunData.length > 0) {
                 const geometry = loader.parse(base64ToArrayBuffer(data.gunData));
                 geometry.center(); 
-                geometry.rotateY(Math.PI / 2);
                 const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
                 gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
-                gunInternalMesh.rotation.y = data.gunRotZ; 
-                gunMesh.add(gunInternalMesh);
+                toolAdjustmentGroup.add(gunInternalMesh);
             }
 
             if(data.jigData && data.jigData.length > 0) {
@@ -432,81 +453,41 @@ def build_embedded_viewport(payload):
             function computeForwardKinematics(angles) {
                 const computedTransforms = [];
                 let currentMatrix = new THREE.Matrix4();
-                
-                computedTransforms.push({
-                    pos: new THREE.Vector3(0,0,0).toArray(),
-                    quat: new THREE.Quaternion().toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3(0,0,0).toArray(), quat: new THREE.Quaternion().toArray() });
 
-                // Axis 1
-                let m1 = getLinkStructureBaseMatrix(dh[0]);
-                m1.multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
+                let m1 = getLinkStructureBaseMatrix(dh[0]).multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
                 currentMatrix.multiply(m1);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                // Axis 2
-                let m2 = getLinkStructureBaseMatrix(dh[1]);
-                m2.multiply(new THREE.Matrix4().makeRotationY(angles[2]));
+                let m2 = getLinkStructureBaseMatrix(dh[1]).multiply(new THREE.Matrix4().makeRotationY(angles[2]));
                 currentMatrix.multiply(m2);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                // Axis 3
-                let m3 = getLinkStructureBaseMatrix(dh[2]);
-                m3.multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+                let m3 = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
                 currentMatrix.multiply(m3);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                // Axis 4
-                let m4 = getLinkStructureBaseMatrix(dh[3]);
-                m4.multiply(new THREE.Matrix4().makeRotationX(angles[4]));
+                let m4 = getLinkStructureBaseMatrix(dh[3]).multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
                 
                 if (data.profileName === "Yaskawa_3500") {
-                    computedTransforms.push({
-                        pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                        quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                    });
+                    computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
                 } else {
                     let correctionMatrix = currentMatrix.clone();
-                    let dirVec = new THREE.Vector3(1, 0, 0);
-                    let directionVector = dirVec.applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
+                    let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
                     let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
-                    computedTransforms.push({
-                        pos: fixedPos.toArray(),
-                        quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                    });
+                    computedTransforms.push({ pos: fixedPos.toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
                 }
 
-                // Axis 5
-                let m5 = getLinkStructureBaseMatrix(dh[4]);
-                m5.multiply(new THREE.Matrix4().makeRotationY(angles[5]));
+                let m5 = getLinkStructureBaseMatrix(dh[4]).multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                 currentMatrix.multiply(m5);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                // Axis 6
                 let m6 = getLinkStructureBaseMatrix(dh[5]);
-                if (data.profileName === "Yaskawa_3500") {
-                    m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6]));
-                } else {
-                    m6.multiply(new THREE.Matrix4().makeRotationX(angles[6]));
-                }
+                if (data.profileName === "Yaskawa_3500") { m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6])); }
+                else { m6.multiply(new THREE.Matrix4().makeRotationX(angles[6])); }
                 currentMatrix.multiply(m6);
-                computedTransforms.push({
-                    pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(),
-                    quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray()
-                });
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
                 return computedTransforms;
             }
@@ -515,13 +496,11 @@ def build_embedded_viewport(payload):
                 for (let iteration = 0; iteration < 12; iteration++) {
                     let currentTransforms = computeForwardKinematics(localJointAngles);
                     let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
-                    
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
                     if (errorDistance.length() < 0.0002) break;
 
                     for (let j = 1; j <= 6; j++) {
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
-                        
                         let axisVectorDirection = new THREE.Vector3(0, 0, 1);
                         if (j === 2 || j === 3 || j === 5) axisVectorDirection.set(0, 1, 0);
                         if (j === 4 || (j === 6 && data.profileName !== "Yaskawa_3500")) axisVectorDirection.set(1, 0, 0);
@@ -530,17 +509,12 @@ def build_embedded_viewport(payload):
                         let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
 
                         let angleScalarDot = componentToEE.dot(componentToTarget);
-                        let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.12; 
+                        let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.12;
                         
                         if (localizedDeltaTheta > 0.0001) {
                             let directionalCross = new THREE.Vector3().crossVectors(componentToEE, componentToTarget);
-                            if (directionalCross.dot(axisVectorDirection) < 0) {
-                                localJointAngles[j] -= localizedDeltaTheta;
-                            } else {
-                                localJointAngles[j] += localizedDeltaTheta;
-                            }
-                            
-                            // Industry Limit Enforcement inside IK Optimization
+                            if (directionalCross.dot(axisVectorDirection) < 0) { localJointAngles[j] -= localizedDeltaTheta; }
+                            else { localJointAngles[j] += localizedDeltaTheta; }
                             localJointAngles[j] = Math.max(limitsConfig[j-1][0], Math.min(limitsConfig[j-1][1], localJointAngles[j]));
                         }
                     }
@@ -551,7 +525,6 @@ def build_embedded_viewport(payload):
 
             function refreshSceneDisplay(updateGizmoPosition = true) {
                 lastComputedTransforms = computeForwardKinematics(localJointAngles);
-                
                 for(let i=0; i<7; i++) {
                     if(links[i] && lastComputedTransforms[i]) {
                         links[i].position.fromArray(lastComputedTransforms[i].pos);
@@ -563,13 +536,12 @@ def build_embedded_viewport(payload):
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
-                    if (data.profileName === "Yaskawa_3500") {
-                        gunMesh.translateZ(-data.gunOffset);
-                    } else {
-                        gunMesh.translateX(data.gunOffset);
-                    }
+                    gunMesh.translateX(data.toolOffsetX);
+                    gunMesh.translateY(data.toolOffsetY);
+                    gunMesh.translateZ(data.toolOffsetZ);
+                    toolAdjustmentGroup.rotation.set(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ');
 
-                    // CRITICAL FIX: Explicit synchronization ensures the transform gizmo sticks tightly to Axis 6
+                    // FIX: Gizmo arrows lock directly to Joint 6 position/orientation during joint adjustments
                     if (updateGizmoPosition || runSimulation) {
                         tcpAnchorPivot.position.copy(links[6].position);
                         tcpAnchorPivot.quaternion.copy(links[6].quaternion);
@@ -582,9 +554,7 @@ def build_embedded_viewport(payload):
 
                 for(let i=1; i<=7; i++) {
                     let displayElement = document.getElementById(`val-${i}`);
-                    if (displayElement) {
-                        displayElement.innerText = `${(localJointAngles[i] * (180 / Math.PI)).toFixed(1)}°`;
-                    }
+                    if (displayElement) { displayElement.innerText = `${(localJointAngles[i] * (180 / Math.PI)).toFixed(1)}°`; }
                 }
             }
 
@@ -600,38 +570,23 @@ def build_embedded_viewport(payload):
             const hudMonitor = document.getElementById("tcp-monitor");
 
             btnJoint.addEventListener("click", () => {
-                activeJogMode = "joint";
-                btnJoint.classList.add("active");
-                btnTCP.classList.remove("active");
-                rowsWrap.style.display = "block";
-                hudMonitor.style.display = "none";
-                transformGizmo.visible = false;
-                transformGizmo.enabled = false;
+                activeJogMode = "joint"; btnJoint.classList.add("active"); btnTCP.classList.remove("active");
+                rowsWrap.style.display = "block"; hudMonitor.style.display = "none";
+                transformGizmo.visible = false; transformGizmo.enabled = false;
             });
 
             btnTCP.addEventListener("click", () => {
-                activeJogMode = "tcp";
-                btnTCP.classList.add("active");
-                btnJoint.classList.remove("active");
-                rowsWrap.style.display = "none";
-                hudMonitor.style.display = "block";
-                transformGizmo.visible = true;
-                transformGizmo.enabled = true;
-                refreshSceneDisplay(true);
+                activeJogMode = "tcp"; btnTCP.classList.add("active"); btnJoint.classList.remove("active");
+                rowsWrap.style.display = "none"; hudMonitor.style.display = "block";
+                transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
             });
 
             const rowsContainer = document.getElementById('joint-jog-container');
             for(let i=1; i<=6; i++) {
                 const row = document.createElement('div');
                 row.className = 'jog-row';
-                row.innerHTML = `
-                    <button class="jog-btn" id="btn-m-${i}">-</button>
-                    <div class="jog-label">A${i}</div>
-                    <div class="val-display" id="val-${i}">0.0°</div>
-                    <button class="jog-btn" id="btn-p-${i}">+</button>
-                `;
+                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A${i}</div><div class="val-display" id="val-${i}">0.0°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
                 rowsContainer.appendChild(row);
-                
                 (function(idx) {
                     document.getElementById(`btn-m-${idx}`).addEventListener('click', () => jogJoint(idx, -1));
                     document.getElementById(`btn-p-${idx}`).addEventListener('click', () => jogJoint(idx, 1));
@@ -639,46 +594,29 @@ def build_embedded_viewport(payload):
             }
             
             const e1Row = document.createElement('div');
-            e1Row.className = 'jog-row';
-            e1Row.style.marginTop = '10px';
-            e1Row.style.borderTop = '1px solid #333';
-            e1Row.style.paddingTop = '8px';
-            e1Row.innerHTML = `
-                <button class="jog-btn" id="btn-m-7">-</button>
-                <div class="jog-label" style="color:#ff9800;">E1</div>
-                <div class="val-display" id="val-7">0.0°</div>
-                <button class="jog-btn" id="btn-p-7">+</button>
-            `;
+            e1Row.className = 'jog-row'; e1Row.style.marginTop = '10px'; e1Row.style.borderTop = '1px solid #333'; e1Row.style.paddingTop = '8px';
+            e1Row.innerHTML = `<button class="jog-btn" id="btn-m-7">-</button><div class="jog-label" style="color:#ff9800;">E1</div><div class="val-display" id="val-7">0.0°</div><button class="jog-btn" id="btn-p-7">+</button>`;
             rowsContainer.appendChild(e1Row);
             document.getElementById('btn-m-7').addEventListener('click', () => jogJoint(7, -1));
             document.getElementById('btn-p-7').addEventListener('click', () => jogJoint(7, 1));
 
             function jogJoint(jointIdx, direction) {
-                if(runSimulation) return; 
+                if(runSimulation) return;
                 let nextAngle = localJointAngles[jointIdx] + (direction * J_STEP);
-                
-                // Enforce Industry Safety Limit Boundary Safeguards
+                // FIX: Standard industry angle safety check constraints
                 if (nextAngle >= limitsConfig[jointIdx-1][0] && nextAngle <= limitsConfig[jointIdx-1][1]) {
                     localJointAngles[jointIdx] = nextAngle;
                     refreshSceneDisplay(true);
                 }
             }
 
-            function updateUIElements() {
-                document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length;
-            }
-
-            document.getElementById('sld-speed').addEventListener('input', (e) => {
-                document.getElementById('val-speed').innerText = e.target.value + "%";
-            });
+            function updateUIElements() { document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length; }
+            document.getElementById('sld-speed').addEventListener('input', (e) => { document.getElementById('val-speed').innerText = e.target.value + "%"; });
 
             document.getElementById('btn-save-step').addEventListener('click', () => {
                 if(runSimulation) return;
                 lastComputedTransforms = computeForwardKinematics(localJointAngles);
-                embeddedTrajectory.push({
-                    angles: [...localJointAngles],
-                    transforms: JSON.parse(JSON.stringify(lastComputedTransforms))
-                });
+                embeddedTrajectory.push({ angles: [...localJointAngles], transforms: JSON.parse(JSON.stringify(lastComputedTransforms)) });
                 updateUIElements();
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "sync_sequence");
@@ -687,26 +625,18 @@ def build_embedded_viewport(payload):
             });
 
             document.getElementById('btn-run-sim').addEventListener('click', () => {
-                if(embeddedTrajectory.length < 2) {
-                    alert("Please record at least 2 structural step points to interpolate trajectory paths.");
-                    return;
-                }
-                simStepIndex = 0;
-                interpolationFraction = 0;
-                runSimulation = true;
+                if(embeddedTrajectory.length < 2) { alert("Please record at least 2 structural step points."); return; }
+                simStepIndex = 0; interpolationFraction = 0; runSimulation = true;
             });
 
             document.getElementById('btn-clear-seq').addEventListener('click', () => {
-                embeddedTrajectory = [];
-                updateUIElements();
+                embeddedTrajectory = []; updateUIElements();
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "clear_sequence");
                 window.parent.location.href = targetUrl.toString();
             });
 
-            let simStepIndex = 0;
-            let interpolationFraction = 0;
-            let runSimulation = false;
+            let simStepIndex = 0; let interpolationFraction = 0; let runSimulation = false;
 
             function animate() {
                 requestAnimationFrame(animate);
@@ -717,36 +647,23 @@ def build_embedded_viewport(payload):
                     document.getElementById('status').innerText = "Status: Running Sequence Simulation";
                     let currentPoint = embeddedTrajectory[simStepIndex];
                     let nextPoint = embeddedTrajectory[simStepIndex + 1];
-
-                    let currentPercent = parseFloat(document.getElementById('sld-speed').value);
-                    let computedStepIncrement = (currentPercent / 100) * 0.04;
+                    let computedStepIncrement = (parseFloat(document.getElementById('sld-speed').value) / 100) * 0.04;
 
                     interpolationFraction += computedStepIncrement;
                     if(interpolationFraction >= 1.0) {
-                        interpolationFraction = 0;
-                        simStepIndex++;
-                        if (simStepIndex >= embeddedTrajectory.length - 1) {
-                            runSimulation = false;
-                            simStepIndex = 0;
-                        }
+                        interpolationFraction = 0; simStepIndex++;
+                        if (simStepIndex >= embeddedTrajectory.length - 1) { runSimulation = false; simStepIndex = 0; }
                     }
 
                     let blendedTransforms = [];
                     for(let i=0; i<7; i++) {
-                        let pV1 = new THREE.Vector3().fromArray(currentPoint.transforms[i].pos);
-                        let pV2 = new THREE.Vector3().fromArray(nextPoint.transforms[i].pos);
-                        let blendedPos = new THREE.Vector3().lerpVectors(pV1, pV2, interpolationFraction).toArray();
-
-                        let qV1 = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat);
-                        let qV2 = new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat);
-                        let blendedQuat = qV1.slerp(qV2, interpolationFraction).toArray();
-
+                        let blendedPos = new THREE.Vector3().lerpVectors(new THREE.Vector3().fromArray(currentPoint.transforms[i].pos), new THREE.Vector3().fromArray(nextPoint.transforms[i].pos), interpolationFraction).toArray();
+                        let blendedQuat = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat).slerp(new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat), interpolationFraction).toArray();
                         blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
                     }
-                    let intermediateE1 = (1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7];
-                    
                     localJointAngles = [...currentPoint.angles]; 
-                    updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, intermediateE1);
+                    // FIX: Keep gizmo locked to Axis 6 tracking during path animation loops
+                    updateSceneTransforms(blendedTransforms, data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ, data.toolRotX, data.toolRotY, data.toolRotZ, data.jigX, data.jigY, data.jigZ, ((1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7]));
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
                     document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
@@ -754,42 +671,29 @@ def build_embedded_viewport(payload):
                 renderer.render(scene, camera);
             }
 
-            function updateSceneTransforms(transforms, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
+            function updateSceneTransforms(transforms, ox, oy, oz, rx, ry, rz, jigX, jigY, jigZ, e1RotAngle) {
                 for(let i=0; i<7; i++) {
-                    if(links[i] && transforms[i]) {
-                        links[i].position.fromArray(transforms[i].pos);
-                        links[i].quaternion.fromArray(transforms[i].quat);
-                    }
+                    if(links[i] && transforms[i]) { links[i].position.fromArray(transforms[i].pos); links[i].quaternion.fromArray(transforms[i].quat); }
                 }
                 if(links[6]) {
-                    links[6].updateMatrixWorld();
-                    gunMesh.position.copy(links[6].position);
-                    gunMesh.quaternion.copy(links[6].quaternion);
+                    links[6].updateMatrixWorld(); gunMesh.position.copy(links[6].position); gunMesh.quaternion.copy(links[6].quaternion);
+                    gunMesh.translateX(ox); gunMesh.translateY(oy); gunMesh.translateZ(oz);
+                    toolAdjustmentGroup.rotation.set(rx, ry, rz, 'XYZ');
                     
-                    if (data.profileName === "Yaskawa_3500") {
-                        gunMesh.translateZ(-gunOffset);
-                    } else {
-                        gunMesh.translateX(gunOffset);
-                    }
-
-                    // FIX: Keeps the transform handles aligned on Axis 6 during timeline preview playback cycles
+                    // Force arrows tracking update frame
                     tcpAnchorPivot.position.copy(links[6].position);
                     tcpAnchorPivot.quaternion.copy(links[6].quaternion);
                     transformGizmo.updateMatrixWorld();
                 }
-                jigMesh.position.set(jigX, jigY, jigZ);
-                internalJigContent.rotation.z = e1RotAngle;
+                jigMesh.position.set(jigX, jigY, jigZ); internalJigContent.rotation.z = e1RotAngle;
             }
 
             window.addEventListener('resize', () => {
-                camera.aspect = container.clientWidth / container.clientHeight;
-                camera.updateProjectionMatrix();
+                camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix();
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            refreshSceneDisplay(true);
-            updateUIElements();
-            animate();
+            refreshSceneDisplay(true); updateUIElements(); animate();
         </script>
     </body>
     </html>
@@ -798,18 +702,19 @@ def build_embedded_viewport(payload):
     components.html(html_source, height=750, scrolling=False)
 
 # --- 8. DYNAMIC HARDWARE FILE BINDING LAYER ---
-path_gun = os.path.join(TEMP_DIR, "gun.stl")
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
 link_b64s = []
 for i in range(7):
     mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
     target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", selected_profile, mesh_filename)
-    
     if not os.path.exists(target_mesh_path):
         target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
-        
     link_b64s.append(get_file_base64_cached(target_mesh_path))
+
+tooling_b64 = ""
+if selected_tool_path and os.path.exists(selected_tool_path):
+    tooling_b64 = get_file_base64_cached(selected_tool_path, get_file_hash(selected_tool_path))
 
 scene_payload = {
     "profileName": selected_profile,
@@ -818,11 +723,15 @@ scene_payload = {
     "linkGeometries": link_b64s,
     "fallbackHeights": active_cfg["fallback_heights"],
     "dhConfig": active_cfg["links"],
-    "jointLimits": active_cfg["limits"], # Passed down directly to structural components
-    "gunData": get_file_base64_cached(path_gun, get_file_hash(path_gun)),
+    "jointLimits": active_cfg["limits"],
+    "gunData": tooling_b64,
     "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
-    "gunOffset": g_off_x,
-    "gunRotZ": float(g_rot_z) * (np.pi / 180.0),
+    "toolOffsetX": t_off_x,
+    "toolOffsetY": t_off_y,
+    "toolOffsetZ": t_off_z,
+    "toolRotX": float(t_rot_x) * (np.pi / 180.0),
+    "toolRotY": float(t_rot_y) * (np.pi / 180.0),
+    "toolRotZ": float(t_rot_z) * (np.pi / 180.0),
     "jigX": jx_pos,
     "jigY": jy_pos,
     "jigZ": jz_pos,
