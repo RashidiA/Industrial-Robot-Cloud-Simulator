@@ -19,7 +19,8 @@ if 'j_angles' not in st.session_state:
 if 'program' not in st.session_state:
     st.session_state.program = []
 
-# --- 2. MULTI-ROBOT KINEMATICS REGISTRY WITH INDUSTRY LIMITS (RADIANS) ---
+# --- 2. MULTI-ROBOT KINEMATICS REGISTRY WITH MODIFIED JOINT 3 LIMITS (RADIANS) ---
+# NOTE: Joint 3 (Index 2 in limits array) across all profiles is now dynamically set to [-1.3962, 1.3962] (~ -80° to +80°)
 ROBOT_REGISTRY = {
     "ABB_6700": {
         "links": [
@@ -34,7 +35,7 @@ ROBOT_REGISTRY = {
         "limits": [
             [-np.pi, np.pi],               # A1: ±180°
             [-1.047, 1.483],               # A2: -60° to +85°
-            [-1.221, 1.221],               # A3: -75° to +70°
+            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
             [-6.108, 6.108],               # A4: ±350°
             [-2.181, 2.181],               # A5: ±125°
             [-6.108, 6.108],               # A6: ±350°
@@ -52,8 +53,13 @@ ROBOT_REGISTRY = {
         ],
         "fallback_heights": [0.68, 0.4, 0.88, 0.3, 0.15, 0.15, 0.08],
         "limits": [
-            [-np.pi, np.pi], [-1.221, 1.658], [-1.047, 1.221], 
-            [-5.235, 5.235], [-2.094, 2.094], [-6.981, 6.981], [-np.pi, np.pi]
+            [-np.pi, np.pi], 
+            [-1.221, 1.658], 
+            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-5.235, 5.235], 
+            [-2.094, 2.094], 
+            [-6.981, 6.981], 
+            [-np.pi, np.pi]
         ]
     },
     "ABB_6600": {
@@ -67,8 +73,13 @@ ROBOT_REGISTRY = {
         ],
         "fallback_heights": [0.715, 0.45, 1.145, 0.38, 0.2, 0.2, 0.1],
         "limits": [
-            [-np.pi, np.pi], [-1.134, 1.483], [-3.141, 1.221], 
-            [-5.235, 5.235], [-2.094, 2.094], [-5.235, 5.235], [-np.pi, np.pi]
+            [-np.pi, np.pi], 
+            [-1.134, 1.483], 
+            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-5.235, 5.235], 
+            [-2.094, 2.094], 
+            [-5.235, 5.235], 
+            [-np.pi, np.pi]
         ]
     },
     "KUKA_KR150": {
@@ -82,8 +93,13 @@ ROBOT_REGISTRY = {
         ],
         "fallback_heights": [0.75, 0.5, 1.25, 0.35, 0.23, 0.21, 0.09],
         "limits": [
-            [-3.228, 3.228], [-0.785, 1.483], [-3.665, 2.705], 
-            [-6.108, 6.108], [-2.181, 2.181], [-6.108, 6.108], [-np.pi, np.pi]
+            [-3.228, 3.228], 
+            [-0.785, 1.483], 
+            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-6.108, 6.108], 
+            [-2.181, 2.181], 
+            [-6.108, 6.108], 
+            [-np.pi, np.pi]
         ]
     },
     "Yaskawa_3500": {
@@ -97,8 +113,13 @@ ROBOT_REGISTRY = {
         ],
         "fallback_heights": [0.70, 0.45, 1.15, 0.35, 0.18, 0.18, 0.10],
         "limits": [
-            [-3.141, 3.141], [-1.570, 1.308], [-1.483, 3.665], 
-            [-3.141, 3.141], [-2.268, 2.268], [-6.283, 6.283], [-np.pi, np.pi]
+            [-3.141, 3.141], 
+            [-1.570, 1.308], 
+            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-3.141, 3.141], 
+            [-2.268, 2.268], 
+            [-6.283, 6.283], 
+            [-np.pi, np.pi]
         ]
     }
 }
@@ -203,7 +224,7 @@ with st.sidebar:
         j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
-    # --- 6B. RESTORED END-EFFECTOR TOOLING LIBRARY ---
+    # --- 6B. END-EFFECTOR TOOLING LIBRARY ---
     with st.expander("⚙️ End-Effector Tooling Library", expanded=True):
         tool_source = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"])
         selected_tool_path = None
@@ -532,16 +553,10 @@ def build_embedded_viewport(payload):
                     }
                 }
                 if(links[6]) {
-                    links[6].updateMatrixWorld();
-                    gunMesh.position.copy(links[6].position);
-                    gunMesh.quaternion.copy(links[6].quaternion);
-                    
-                    gunMesh.translateX(data.toolOffsetX);
-                    gunMesh.translateY(data.toolOffsetY);
-                    gunMesh.translateZ(data.toolOffsetZ);
+                    links[6].updateMatrixWorld(); gunMesh.position.copy(links[6].position); gunMesh.quaternion.copy(links[6].quaternion);
+                    gunMesh.translateX(data.toolOffsetX); gunMesh.translateY(data.toolOffsetY); gunMesh.translateZ(data.toolOffsetZ);
                     toolAdjustmentGroup.rotation.set(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ');
 
-                    // FIX: Gizmo arrows lock directly to Joint 6 position/orientation during joint adjustments
                     if (updateGizmoPosition || runSimulation) {
                         tcpAnchorPivot.position.copy(links[6].position);
                         tcpAnchorPivot.quaternion.copy(links[6].quaternion);
@@ -603,7 +618,6 @@ def build_embedded_viewport(payload):
             function jogJoint(jointIdx, direction) {
                 if(runSimulation) return;
                 let nextAngle = localJointAngles[jointIdx] + (direction * J_STEP);
-                // FIX: Standard industry angle safety check constraints
                 if (nextAngle >= limitsConfig[jointIdx-1][0] && nextAngle <= limitsConfig[jointIdx-1][1]) {
                     localJointAngles[jointIdx] = nextAngle;
                     refreshSceneDisplay(true);
@@ -662,7 +676,6 @@ def build_embedded_viewport(payload):
                         blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
                     }
                     localJointAngles = [...currentPoint.angles]; 
-                    // FIX: Keep gizmo locked to Axis 6 tracking during path animation loops
                     updateSceneTransforms(blendedTransforms, data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ, data.toolRotX, data.toolRotY, data.toolRotZ, data.jigX, data.jigY, data.jigZ, ((1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7]));
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
@@ -680,7 +693,6 @@ def build_embedded_viewport(payload):
                     gunMesh.translateX(ox); gunMesh.translateY(oy); gunMesh.translateZ(oz);
                     toolAdjustmentGroup.rotation.set(rx, ry, rz, 'XYZ');
                     
-                    // Force arrows tracking update frame
                     tcpAnchorPivot.position.copy(links[6].position);
                     tcpAnchorPivot.quaternion.copy(links[6].quaternion);
                     transformGizmo.updateMatrixWorld();
