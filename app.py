@@ -6,7 +6,6 @@ import json
 import base64
 from ikpy.chain import Chain
 from ikpy.link import OriginLink, URDFLink
-from scipy.spatial.transform import Rotation as R
 
 # --- 1. SYSTEM INITIALIZATION ---
 st.set_page_config(page_title="Multi-Robot OLP Pro-Simulator", layout="wide")
@@ -106,7 +105,7 @@ def build_robot_chain(profile_name, hardware_config):
     return Chain(name=profile_name, links=[
         OriginLink(),
         URDFLink(name=links_data[0]["name"], origin_translation=links_data[0]["trans"], origin_orientation=links_data[0]["orient"], rotation=links_data[0]["rot"]),
-        URDFLink(name=links_data[1]["name"], origin_translation=links_data[1]["trans"], origin_orientation=links_data[1]["orient"], rotation=links_data[1]["rot"]),
+        URDFLink(name=links_data[1]["name"], origin_translation=links_data[1]["trans"], origin_orientation=links_data[1]["rot"]),
         URDFLink(name=links_data[2]["name"], origin_translation=links_data[2]["trans"], origin_orientation=links_data[2]["orient"], rotation=links_data[2]["rot"]),
         URDFLink(name=links_data[3]["name"], origin_translation=links_data[3]["trans"], origin_orientation=links_data[3]["orient"], rotation=links_data[3]["rot"]),
         URDFLink(name=links_data[4]["name"], origin_translation=links_data[4]["trans"], origin_orientation=links_data[4]["orient"], rotation=links_data[4]["rot"]),
@@ -179,7 +178,7 @@ with st.sidebar:
         j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
-    # --- 6B. DETAILED END-EFFECTOR TOOLING LIBRARY CONTROL PANEL ---
+    # --- 6B. END-EFFECTOR TOOLING LIBRARY CONTROL PANEL ---
     with st.expander("⚙️ End-Effector Tooling Library", expanded=True):
         CATEGORY_MAPPING = {
             "Welding Guns": "welding_guns",
@@ -205,7 +204,6 @@ with st.sidebar:
             selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
             selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
         else:
-            # Fallback manual tool mesh file uploader fallback option
             up_gun = st.file_uploader("Or Upload Custom Tool STL", type=["stl"], key="gun_up")
             if up_gun:
                 selected_tool_path = os.path.join(TEMP_DIR, "gun.stl")
@@ -225,7 +223,7 @@ with st.sidebar:
         t_rot_y = st.slider("Rotate Y Axis (Pitch)", -180, 180, 0, step=5)
         t_rot_z = st.slider("Rotate Z Axis (Yaw)", -180, 180, 0, step=5)
 
-# Set fallbacks to safeguard global tracking data loops if panels are closed
+# Safety parameter fallback
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
 if 'jz_pos' not in locals(): jz_pos = 0.55
@@ -367,6 +365,11 @@ def build_embedded_viewport(payload):
 
             transformGizmo.addEventListener('objectChange', function () {
                 if (activeJogMode !== "tcp" || runSimulation) return;
+                
+                // FORCE TRACKING TARGET Z PROTECTION LIMIT (STOPS HANDLES GOING SUBTERRANEAN)
+                if (tcpAnchorPivot.position.z < 0.0) {
+                    tcpAnchorPivot.position.z = 0.0;
+                }
                 executeCyclicInverseKinematics(tcpAnchorPivot.position);
             });
 
@@ -401,17 +404,13 @@ def build_embedded_viewport(payload):
                 links.push(mesh);
             }
 
-            // Create sub-wrapper to keep rotation adjustments independent from positioning tracking loops
             let toolAdjustmentGroup = new THREE.Group();
             gunMesh.add(toolAdjustmentGroup);
 
             if(data.gunData && data.gunData.length > 0) {
                 const geometry = loader.parse(base64ToArrayBuffer(data.gunData));
                 geometry.center(); 
-                
-                // Keep base orientation standardized before mounting offset matrix loops
                 geometry.rotateY(Math.PI / 2);
-                
                 const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
                 gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
                 toolAdjustmentGroup.add(gunInternalMesh);
@@ -476,8 +475,12 @@ def build_embedded_viewport(payload):
             }
 
             function executeCyclicInverseKinematics(targetGlobalPos) {
+                let savedAnglesBackup = [...localJointAngles];
+                
                 for (let iteration = 0; iteration < 8; iteration++) {
                     let currentTransforms = computeForwardKinematics(localJointAngles);
+                    
+                    // TARGET LOCK: TCP IS PERMANENTLY BONDED TO THE JOINT 6 FLANGE FLANGE CENTER (INDEX 6)
                     let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
                     if (errorDistance.length() < 0.0005) break;
@@ -500,8 +503,26 @@ def build_embedded_viewport(payload):
                         }
                     }
                 }
+
+                // --- REQUIREMENT 1: CRITICAL GEOMETRIC Z-AXIS FLOOR CONSTRAINT INTERCEPT ---
+                let evaluatedTransforms = computeForwardKinematics(localJointAngles);
+                let floorBreachDetected = false;
+                for (let k = 0; k < evaluatedTransforms.length; k++) {
+                    if (evaluatedTransforms[k].pos[2] < -0.001) { // Tolerate floating point noise down to -1mm
+                        floorBreachDetected = true;
+                        break;
+                    }
+                }
+
+                if (floorBreachDetected) {
+                    // Revert calculation cycle immediately if floor breach condition is matched
+                    localJointAngles = [...savedAnglesBackup];
+                    let originalValidTransforms = computeForwardKinematics(localJointAngles);
+                    tcpAnchorPivot.position.fromArray(originalValidTransforms[6].pos);
+                }
+
                 refreshSceneDisplay(false);
-                updateMonitorHUDText(targetGlobalPos);
+                updateMonitorHUDText(tcpAnchorPivot.position);
             }
 
             function refreshSceneDisplay(updateGizmoPosition = true) {
@@ -514,15 +535,15 @@ def build_embedded_viewport(payload):
                 }
                 if(links[6]) {
                     links[6].updateMatrixWorld();
+                    
+                    // --- REQUIREMENT 2: ROBOT JOINT 6 CENTERLINE PINNED POSITIONING MATRIX ---
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
                     
-                    // --- APPLY MULTI-AXIS TCP OFFSETS FROM SIDEBAR ---
+                    // Render tool transforms without shifting the mechanical joint pivot point tracking
                     gunMesh.translateX(data.toolOffsetX);
                     gunMesh.translateY(data.toolOffsetY);
                     gunMesh.translateZ(data.toolOffsetZ);
-
-                    // --- APPLY MULTI-AXIS MOUNTING ROTATIONS FROM SIDEBAR ---
                     toolAdjustmentGroup.rotation.set(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ');
 
                     if (updateGizmoPosition) {
@@ -567,7 +588,7 @@ def build_embedded_viewport(payload):
             for(let i=1; i<=6; i++) {
                 const row = document.createElement('div');
                 row.className = 'jog-row';
-                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A1</div><div class="val-display" id="val-${i}">0.0°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
+                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A${i}</div><div class="val-display" id="val-${i}">0.0°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
                 rowsContainer.appendChild(row);
                 (function(idx) {
                     document.getElementById(`btn-m-${idx}`).addEventListener('click', () => jogJoint(idx, -1));
@@ -583,8 +604,18 @@ def build_embedded_viewport(payload):
             document.getElementById('btn-p-7').addEventListener('click', () => jogJoint(7, 1));
 
             function jogJoint(jointIdx, direction) {
-                if(runSimulation) return; 
+                if(runSimulation) return;
+                let originalAngleValue = localJointAngles[jointIdx];
                 localJointAngles[jointIdx] += direction * J_STEP;
+                
+                // CRITICAL INTERCEPT FOR MANUAL JOG COORDS AS WELL
+                let checkedTransforms = computeForwardKinematics(localJointAngles);
+                for (let k = 0; k < checkedTransforms.length; k++) {
+                    if (checkedTransforms[k].pos[2] < 0.0) {
+                        localJointAngles[jointIdx] = originalAngleValue; // Reset back
+                        break;
+                    }
+                }
                 refreshSceneDisplay(true);
             }
 
