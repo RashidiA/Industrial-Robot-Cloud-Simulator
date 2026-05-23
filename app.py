@@ -117,7 +117,7 @@ robot_chain = build_robot_chain(selected_profile, active_cfg)
 
 @st.cache_data(show_spinner=False)
 def get_file_base64_cached(filepath, file_hash=""):
-    if filepath and os.path.exists(filepath):
+    if os.path.exists(filepath):
         try:
             with open(filepath, "rb") as f:
                 return base64.b64encode(f.read()).decode('utf-8')
@@ -126,7 +126,7 @@ def get_file_base64_cached(filepath, file_hash=""):
     return ""
 
 def get_file_hash(filepath):
-    if filepath and os.path.exists(filepath):
+    if os.path.exists(filepath):
         return str(os.path.getmtime(filepath))
     return ""
 
@@ -147,7 +147,7 @@ if "event" in query_params:
         st.session_state.j_angles = [0.0] * 8
     st.query_params.clear()
 
-# --- 6. OPERATOR INTERFACE CONTROLS & END-EFFECTOR LIBRARY ---
+# --- 6. OPERATOR INTERFACE CONTROLS ---
 with st.sidebar:
     with st.expander("🛠️ Layout Setup", expanded=False):
         if st.button("🔴 RESET GUN & JIG", use_container_width=True):
@@ -179,12 +179,11 @@ with st.sidebar:
         j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
-    # --- NEW: DETAILED END-EFFECTOR TOOLING LIBRARY CONTROL PANEL ---
+    # --- 6B. DETAILED END-EFFECTOR TOOLING LIBRARY CONTROL PANEL ---
     with st.expander("⚙️ End-Effector Tooling Library", expanded=True):
-        # Dictionary routing categories to actual physical folder directories on disk
         CATEGORY_MAPPING = {
-            "Grippers": "grippers",
             "Welding Guns": "welding_guns",
+            "Grippers": "grippers",
             "Welding Torches": "welding_torches"
         }
         
@@ -193,7 +192,6 @@ with st.sidebar:
             options=list(CATEGORY_MAPPING.keys())
         )
         
-        # Build direct absolute target structural scan path
         folder_target_name = CATEGORY_MAPPING[selected_category]
         library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", folder_target_name)
         
@@ -204,22 +202,30 @@ with st.sidebar:
             available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
             
         if available_tools:
-            selected_tool_file = st.selectbox(
-                "Select Tooling Model",
-                options=available_tools
-            )
+            selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
             selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
         else:
-            st.caption(f"No library files found in:\n`assets/robot_tools/{folder_target_name}/`")
-            
-        st.divider()
-        st.write("**📐 Tool Center Point (TCP) Offset**")
-        g_off_x = st.slider("Gun Offset X (TCP)", -0.5, 0.5, 0.0, step=0.01)
-        g_rot_z = st.slider("Gun Twist Orientation (Y-Axis Rot)", -180, 180, 180, step=90)
+            # Fallback manual tool mesh file uploader fallback option
+            up_gun = st.file_uploader("Or Upload Custom Tool STL", type=["stl"], key="gun_up")
+            if up_gun:
+                selected_tool_path = os.path.join(TEMP_DIR, "gun.stl")
+                with open(selected_tool_path, "wb") as f: 
+                    f.write(up_gun.getbuffer())
+                st.cache_data.clear()
 
-# Set defaults to safeguard tracking loops if layout panels aren't read yet
-if 'g_off_x' not in locals(): g_off_x = 0.0
-if 'g_rot_z' not in locals(): g_rot_z = 180
+        st.divider()
+        st.write("**📐 6-Axis Tool Center Point (TCP) Offsets**")
+        col_ox, col_oy, col_oz = st.columns(3)
+        with col_ox: t_off_x = st.number_input("Offset X", value=0.00, step=0.05, format="%.2f")
+        with col_oy: t_off_y = st.number_input("Offset Y", value=0.00, step=0.05, format="%.2f")
+        with col_oz: t_off_z = st.number_input("Offset Z", value=0.00, step=0.05, format="%.2f")
+        
+        st.write("**🔄 Tool Mounting Matrix Rotations (Degrees)**")
+        t_rot_x = st.slider("Rotate X Axis (Roll)", -180, 180, 0, step=5)
+        t_rot_y = st.slider("Rotate Y Axis (Pitch)", -180, 180, 0, step=5)
+        t_rot_z = st.slider("Rotate Z Axis (Yaw)", -180, 180, 0, step=5)
+
+# Set fallbacks to safeguard global tracking data loops if panels are closed
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
 if 'jz_pos' not in locals(): jz_pos = 0.55
@@ -228,7 +234,6 @@ if 'j_rot_y' not in locals(): j_rot_y = 0
 if 'js_scale' not in locals(): js_scale = 0.001
 
 # --- 7. VIRTUAL WEBGL SIMULATOR VIEWPORT ---
-# (Kept identical to ensure original Three.js inverse/rendering loops function cleanly)
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
@@ -272,12 +277,10 @@ def build_embedded_viewport(payload):
         <div id="status">WebGL Processing...</div>
         <div id="jog-pendant">
             <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
-            
             <div class="mode-container">
                 <button id="mode-joint" class="mode-btn active">Joint Jog</button>
                 <button id="mode-tcp" class="mode-btn">⌖ TCP Jog</button>
             </div>
-
             <div id="tcp-monitor">
                 <div style="color: #00ffcc; font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
                 <div class="tcp-grid">
@@ -286,9 +289,7 @@ def build_embedded_viewport(payload):
                     <span style="color:#4444ff">Z:<span id="lbl-tz">0.00</span></span>
                 </div>
             </div>
-            
             <div id="joint-jog-container"></div>
-            
             <div class="action-block">
                 <div class="jog-row" style="margin-bottom: 4px;">
                     <div class="jog-label" style="font-size: 11px; color: #aaa;">SPEED</div>
@@ -311,7 +312,7 @@ def build_embedded_viewport(payload):
             let localJointAngles = [...data.initialAngles];
             let lastComputedTransforms = [];
             let embeddedTrajectory = [...data.trajectory];
-            let activeJogMode = "joint"; 
+            let activeJogMode = "joint";
             
             const J_STEP = 5 * (Math.PI / 180);
 
@@ -353,7 +354,7 @@ def build_embedded_viewport(payload):
             scene.add(tcpAnchorPivot);
 
             const transformGizmo = new THREE.TransformControls(camera, renderer.domElement);
-            transformGizmo.size = 0.65; 
+            transformGizmo.size = 0.65;
             transformGizmo.setMode("translate");
             transformGizmo.attach(tcpAnchorPivot);
             transformGizmo.visible = false;
@@ -378,11 +379,8 @@ def build_embedded_viewport(payload):
             }
 
             let targetColor = 0xcccccc; 
-            if (data.profileName === "Yaskawa_3500") {
-                targetColor = 0x0055ff; 
-            } else if (data.profileName === "KUKA_KR150") {
-                targetColor = 0xff6600; 
-            }
+            if (data.profileName === "Yaskawa_3500") { targetColor = 0x0055ff; } 
+            else if (data.profileName === "KUKA_KR150") { targetColor = 0xff6600; }
 
             for(let i=0; i<7; i++) {
                 let mesh;
@@ -403,14 +401,20 @@ def build_embedded_viewport(payload):
                 links.push(mesh);
             }
 
+            // Create sub-wrapper to keep rotation adjustments independent from positioning tracking loops
+            let toolAdjustmentGroup = new THREE.Group();
+            gunMesh.add(toolAdjustmentGroup);
+
             if(data.gunData && data.gunData.length > 0) {
                 const geometry = loader.parse(base64ToArrayBuffer(data.gunData));
                 geometry.center(); 
+                
+                // Keep base orientation standardized before mounting offset matrix loops
                 geometry.rotateY(Math.PI / 2);
+                
                 const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
                 gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
-                gunInternalMesh.rotation.y = data.gunRotZ; 
-                gunMesh.add(gunInternalMesh);
+                toolAdjustmentGroup.add(gunInternalMesh);
             }
 
             if(data.jigData && data.jigData.length > 0) {
@@ -512,8 +516,14 @@ def build_embedded_viewport(payload):
                     links[6].updateMatrixWorld();
                     gunMesh.position.copy(links[6].position);
                     gunMesh.quaternion.copy(links[6].quaternion);
-                    if (data.profileName === "Yaskawa_3500") { gunMesh.translateZ(-data.gunOffset); }
-                    else { gunMesh.translateX(data.gunOffset); }
+                    
+                    // --- APPLY MULTI-AXIS TCP OFFSETS FROM SIDEBAR ---
+                    gunMesh.translateX(data.toolOffsetX);
+                    gunMesh.translateY(data.toolOffsetY);
+                    gunMesh.translateZ(data.toolOffsetZ);
+
+                    // --- APPLY MULTI-AXIS MOUNTING ROTATIONS FROM SIDEBAR ---
+                    toolAdjustmentGroup.rotation.set(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ');
 
                     if (updateGizmoPosition) {
                         tcpAnchorPivot.position.copy(links[6].position);
@@ -542,31 +552,22 @@ def build_embedded_viewport(payload):
             const hudMonitor = document.getElementById("tcp-monitor");
 
             btnJoint.addEventListener("click", () => {
-                activeJogMode = "joint";
-                btnJoint.classList.add("active");
-                btnTCP.classList.remove("active");
-                rowsWrap.style.display = "block";
-                hudMonitor.style.display = "none";
-                transformGizmo.visible = false;
-                transformGizmo.enabled = false;
+                activeJogMode = "joint"; btnJoint.classList.add("active"); btnTCP.classList.remove("active");
+                rowsWrap.style.display = "block"; hudMonitor.style.display = "none";
+                transformGizmo.visible = false; transformGizmo.enabled = false;
             });
 
             btnTCP.addEventListener("click", () => {
-                activeJogMode = "tcp";
-                btnTCP.classList.add("active");
-                btnJoint.classList.remove("active");
-                rowsWrap.style.display = "none";
-                hudMonitor.style.display = "block";
-                transformGizmo.visible = true;
-                transformGizmo.enabled = true;
-                refreshSceneDisplay(true);
+                activeJogMode = "tcp"; btnTCP.classList.add("active"); btnJoint.classList.remove("active");
+                rowsWrap.style.display = "none"; hudMonitor.style.display = "block";
+                transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
             });
 
             const rowsContainer = document.getElementById('joint-jog-container');
             for(let i=1; i<=6; i++) {
                 const row = document.createElement('div');
                 row.className = 'jog-row';
-                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A${i}</div><div class="val-display" id="val-${i}">0.0°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
+                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A1</div><div class="val-display" id="val-${i}">0.0°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
                 rowsContainer.appendChild(row);
                 (function(idx) {
                     document.getElementById(`btn-m-${idx}`).addEventListener('click', () => jogJoint(idx, -1));
@@ -575,8 +576,7 @@ def build_embedded_viewport(payload):
             }
             
             const e1Row = document.createElement('div');
-            e1Row.className = 'jog-row';
-            e1Row.style.marginTop = '10px'; e1Row.style.borderTop = '1px solid #333'; e1Row.style.paddingTop = '8px';
+            e1Row.className = 'jog-row'; e1Row.style.marginTop = '10px'; e1Row.style.borderTop = '1px solid #333'; e1Row.style.paddingTop = '8px';
             e1Row.innerHTML = `<button class="jog-btn" id="btn-m-7">-</button><div class="jog-label" style="color:#ff9800;">E1</div><div class="val-display" id="val-7">0.0°</div><button class="jog-btn" id="btn-p-7">+</button>`;
             rowsContainer.appendChild(e1Row);
             document.getElementById('btn-m-7').addEventListener('click', () => jogJoint(7, -1));
@@ -640,7 +640,7 @@ def build_embedded_viewport(payload):
                         blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
                     }
                     localJointAngles = [...currentPoint.angles]; 
-                    updateSceneTransforms(blendedTransforms, data.gunOffset, data.jigX, data.jigY, data.jigZ, ((1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7]));
+                    updateSceneTransforms(blendedTransforms, data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ, data.toolRotX, data.toolRotY, data.toolRotZ, data.jigX, data.jigY, data.jigZ, ((1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7]));
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
                     document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
@@ -648,13 +648,14 @@ def build_embedded_viewport(payload):
                 renderer.render(scene, camera);
             }
 
-            function updateSceneTransforms(transforms, gunOffset, jigX, jigY, jigZ, e1RotAngle) {
+            function updateSceneTransforms(transforms, ox, oy, oz, rx, ry, rz, jigX, jigY, jigZ, e1RotAngle) {
                 for(let i=0; i<7; i++) {
                     if(links[i] && transforms[i]) { links[i].position.fromArray(transforms[i].pos); links[i].quaternion.fromArray(transforms[i].quat); }
                 }
                 if(links[6]) {
                     links[6].updateMatrixWorld(); gunMesh.position.copy(links[6].position); gunMesh.quaternion.copy(links[6].quaternion);
-                    if (data.profileName === "Yaskawa_3500") { gunMesh.translateZ(-gunOffset); } else { gunMesh.translateX(gunOffset); }
+                    gunMesh.translateX(ox); gunMesh.translateY(oy); gunMesh.translateZ(oz);
+                    toolAdjustmentGroup.rotation.set(rx, ry, rz, 'XYZ');
                 }
                 jigMesh.position.set(jigX, jigY, jigZ); internalJigContent.rotation.z = e1RotAngle;
             }
@@ -683,15 +684,9 @@ for i in range(7):
         target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
     link_b64s.append(get_file_base64_cached(target_mesh_path))
 
-# Bind library tool base64 payload if paths exist
 tooling_b64 = ""
-if selected_tool_path:
+if selected_tool_path and os.path.exists(selected_tool_path):
     tooling_b64 = get_file_base64_cached(selected_tool_path, get_file_hash(selected_tool_path))
-else:
-    # Fallback to manual uploader path if dropdown selection is unconfigured
-    path_gun = os.path.join(TEMP_DIR, "gun.stl")
-    if os.path.exists(path_gun):
-        tooling_b64 = get_file_base64_cached(path_gun, get_file_hash(path_gun))
 
 scene_payload = {
     "profileName": selected_profile,
@@ -702,8 +697,12 @@ scene_payload = {
     "dhConfig": active_cfg["links"],
     "gunData": tooling_b64,
     "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
-    "gunOffset": g_off_x,
-    "gunRotZ": float(g_rot_z) * (np.pi / 180.0),
+    "toolOffsetX": t_off_x,
+    "toolOffsetY": t_off_y,
+    "toolOffsetZ": t_off_z,
+    "toolRotX": float(t_rot_x) * (np.pi / 180.0),
+    "toolRotY": float(t_rot_y) * (np.pi / 180.0),
+    "toolRotZ": float(t_rot_z) * (np.pi / 180.0),
     "jigX": jx_pos,
     "jigY": jy_pos,
     "jigZ": jz_pos,
