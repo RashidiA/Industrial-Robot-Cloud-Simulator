@@ -83,7 +83,7 @@ ROBOT_REGISTRY = {
     },
     "KUKA_KR150": {
         "links": [
-            {"name": "A1", "trans": [0.0, 0.0, 0.55],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A1", "trans": [0.0, 0.0, 0.55],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 0, 1]},
             {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [1.3, 0.0, -0.05],  "orient": [0.0, 1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A4", "trans": [2.40, 0.0, 0.1],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
@@ -317,7 +317,6 @@ def build_embedded_viewport(payload):
             #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
             .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: bold; }
             
-            /* Mirror-inverted container to hold both video layer and overlay HUD canvas */
             .ar-viewport-container {
                 position: absolute;
                 bottom: 15px;
@@ -330,7 +329,7 @@ def build_embedded_viewport(payload):
                 z-index: 10;
                 display: none;
                 overflow: hidden;
-                transform: scaleX(-1); /* Mirrors webcam for intuitive control */
+                transform: scaleX(-1);
                 background: #000;
             }
             #webcam-feedback {
@@ -454,7 +453,7 @@ def build_embedded_viewport(payload):
             });
 
             transformGizmo.addEventListener('objectChange', function () {
-                if ((activeJogMode !== "tcp" && activeJogMode !== "gesture") || runSimulation) return;
+                if (activeJogMode !== "tcp" || runSimulation) return;
                 executeCyclicInverseKinematics(tcpAnchorPivot.position);
             });
 
@@ -559,17 +558,19 @@ def build_embedded_viewport(payload):
             }
 
             function executeCyclicInverseKinematics(targetGlobalPos) {
+                // Loop axes 1 through 5 to reach the positional vector coordinate safely
                 for (let iteration = 0; iteration < 12; iteration++) {
                     let currentTransforms = computeForwardKinematics(localJointAngles);
                     let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
                     if (errorDistance.length() < 0.0002) break;
 
-                    for (let j = 1; j <= 6; j++) {
+                    // Compute cyclic orientation changes strictly for positional links (1 to 5)
+                    for (let j = 1; j <= 5; j++) {
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
-                        let axisVectorDirection = new THREE.Vector3(0, 0, 1);
-                        if (j === 2 || j === 3 || j === 5) axisVectorDirection.set(0, 1, 0);
-                        if (j === 4 || (j === 6 && data.profileName !== "Yaskawa_3500")) axisVectorDirection.set(1, 0, 0);
+                        let axisVectorDirection = new THREE.Vector3(0, 1, 0); // Pitch configuration setup
+                        if (j === 1) axisVectorDirection.set(0, 0, 1);         // Yaw configuration setup
+                        if (j === 4) axisVectorDirection.set(1, 0, 0);         // Roll configuration setup
 
                         let componentToEE = new THREE.Vector3().subVectors(endEffectorPos, jointPosition).normalize();
                         let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
@@ -585,6 +586,19 @@ def build_embedded_viewport(payload):
                         }
                     }
                 }
+
+                // --- PERSPECTIVE DRIFT ISOLATION FILTER FOR AXIS 5 ---
+                // Force Axis 5 (Pitch) to stabilize relative to its base limits when running via gesture mode
+                if (activeJogMode === "gesture") {
+                    let rawA5 = localJointAngles[5];
+                    if (Math.abs(rawA5) < 0.15) { // 8-degree deadband range centered on neutral position
+                        localJointAngles[5] = 0.0;
+                    } else {
+                        localJointAngles[5] = (rawA5 * 0.1) + (lastStableA5 * 0.9); // Deep low-pass dampening filter
+                    }
+                    lastStableA5 = localJointAngles[5];
+                }
+
                 refreshSceneDisplay(false);
                 updateMonitorHUDText(targetGlobalPos);
             }
@@ -775,9 +789,14 @@ def build_embedded_viewport(payload):
             let initialZLength = null; 
             let baselineTCPX = 1.0;    
             let anchorTCPPos = new THREE.Vector3();
+            
+            // Filtering tracking matrices definitions
+            let lastStableRoll = 0.0;
+            let lastStableA5 = 0.0;
+            const SMOOTHING_FACTOR = 0.12;                  // High-dampening filter setup
+            const DEADBAND_RADIANS = 12 * (Math.PI / 180);  // 12-degree neutral zone cushion
 
             function onHandResults(results) {
-                // Clear overlay layer every cycle frame
                 arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
                 
                 if (activeJogMode !== "gesture" || runSimulation) return;
@@ -794,25 +813,32 @@ def build_embedded_viewport(payload):
                     let targetY = -(palmCenter.x - 0.5) * 2.5; 
                     let targetZ = (1.0 - palmCenter.y) * 2.0; 
 
-                    // Compute pixel scalar length distance between landmarks for depth tracking
                     const currentZDistance = Math.sqrt(Math.pow(palmCenter.x - wrist.x, 2) + Math.pow(palmCenter.y - wrist.y, 2));
                     if (initialZLength === null) {
                         initialZLength = currentZDistance;
                         baselineTCPX = tcpAnchorPivot.position.x;
                     }
 
-                    // Map delta distance to push forward / backward along the simulator's X axis
                     let targetX = baselineTCPX + (currentZDistance - initialZLength) * 4.0;
                     targetX = Math.max(0.3, Math.min(2.5, targetX)); 
 
-                    // --- 2. EXTRACT 6TH AXIS SYMMETRIC ROTATION (A6 SYNC) ---
-                    let handRollAngle = Math.atan2(pinkyBase.y - indexBase.y, pinkyBase.x - indexBase.x);
-                    // Match limits constraints of hardware configurations registry array
-                    localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], handRollAngle));
+                    // --- 2. STABILIZED ISOLATION ROTATION FOR AXIS 6 (ROLL) ---
+                    let rawRollAngle = Math.atan2(pinkyBase.y - indexBase.y, pinkyBase.x - indexBase.x);
+                    
+                    // Force a strict flat baseline center coordinate inside the deadband zone
+                    let processedRoll = rawRollAngle;
+                    if (Math.abs(rawRollAngle) < DEADBAND_RADIANS) {
+                        processedRoll = 0.0; 
+                    }
 
-                    // --- 3. TRIGGER CYCLIC INVERSE KINEMATICS MATRIX ---
+                    // Low-pass exponential smoothing execution
+                    lastStableRoll = (processedRoll * SMOOTHING_FACTOR) + (lastStableRoll * (1 - SMOOTHING_FACTOR));
+                    localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], lastStableRoll));
+
+                    // --- 3. RUN INVERSE KINEMATICS WITH INTERPOLATED POSE ---
                     anchorTCPPos.set(targetX, targetY, targetZ);
-                    tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15); // Smooth lerp filtering input jitter
+                    // Smooth tracking updates to mitigate positional coordinates shifting
+                    tcpAnchorPivot.position.lerp(anchorTCPPos, SMOOTHING_FACTOR); 
                     executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
                     // --- 4. DRAW 2 HUD AR DIRECTIONAL ARROWS & RETICLE ---
@@ -822,30 +848,30 @@ def build_embedded_viewport(payload):
                     arCtx.lineWidth = 4;
                     arCtx.lineCap = "round";
 
-                    // AR Green Arrow: Representing Y-Axis movement (lateral direction)
+                    // AR Green Arrow: Lateral Y Axis
                     arCtx.strokeStyle = "#4caf50";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
                     arCtx.lineTo(screenX + 45, screenY);
                     arCtx.stroke();
 
-                    // AR Blue Arrow: Representing Z-Axis movement (vertical height direction)
+                    // AR Blue Arrow: Vertical Z Axis
                     arCtx.strokeStyle = "#2196f3";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
                     arCtx.lineTo(screenX, screenY - 45);
                     arCtx.stroke();
 
-                    // Target Tracking Reticle Circle (Cyan Glow)
+                    // Cyan Glow Tracker Reticle
                     arCtx.fillStyle = "#00ffcc";
                     arCtx.shadowColor = "#00ffcc";
                     arCtx.shadowBlur = 10;
                     arCtx.beginPath();
                     arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI);
                     arCtx.fill();
-                    arCtx.shadowBlur = 0; // Reset shadows context immediately
+                    arCtx.shadowBlur = 0; 
                 } else {
-                    initialZLength = null; // Clear cache reference frame if hand tracks out of bounds
+                    initialZLength = null; 
                 }
             }
 
