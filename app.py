@@ -189,6 +189,9 @@ if "event" in query_params:
     elif event_type == "clear_sequence":
         st.session_state.program = []
         st.session_state.j_angles = [0.0] * 8
+    elif event_type == "reset_joints":
+        # Keep external rotary axis E1 (index 7) but clear 6 robot joints (indices 0 to 6)
+        st.session_state.j_angles = [0.0] * 7 + [st.session_state.j_angles[7]]
     st.query_params.clear()
 
 # --- 6. OPERATOR INTERFACE CONTROLS ---
@@ -311,6 +314,8 @@ def build_embedded_viewport(payload):
             #btn-save-step { background: #ff9800; color: black; }
             #btn-run-sim { background: #4caf50; color: white; }
             #btn-clear-seq { background: #f44336; color: white; }
+            #btn-reset-pos { background: #3f51b5; color: white; margin-bottom: 4px; border: 1px solid #5c6bc0; }
+            #btn-reset-pos:active { background: #283593; }
             .step-counter { font-size: 12px; font-family: monospace; text-align: center; color: #aaa; margin-top: 2px; }
             
             #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
@@ -349,7 +354,6 @@ def build_embedded_viewport(payload):
                 pointer-events: none;
             }
             
-            /* --- REMARKS / INSTRUCTION HUD HEADER FOR CAMERA VIEWPORT --- */
             .ar-gesture-remarks-hud {
                 position: absolute;
                 top: 0;
@@ -365,7 +369,7 @@ def build_embedded_viewport(payload):
                 font-weight: 500;
                 letter-spacing: 0.5px;
                 z-index: 20;
-                transform: scaleX(-1); /* Corrects mirror text flipping due to parent video feed mirroring */
+                transform: scaleX(-1);
             }
             .ar-gesture-remarks-hud span {
                 color: #ff9800;
@@ -377,7 +381,6 @@ def build_embedded_viewport(payload):
         <div id="status">WebGL Processing...</div>
         
         <div class="ar-viewport-container" id="ar-viewport">
-            <!-- Continuous Instruction HUD Banner Layer -->
             <div class="ar-gesture-remarks-hud">
                 💡 PINCH <span>THUMB & INDEX</span> TO RECORD STEP POSITION
             </div>
@@ -402,6 +405,8 @@ def build_embedded_viewport(payload):
             </div>
             <div id="joint-jog-container"></div>
             <div class="action-block">
+                <button class="btn-action" id="btn-reset-pos">🔄 RESET JOINT POSITIONS (0°)</button>
+                
                 <div class="jog-row" style="margin-bottom: 4px;">
                     <div class="jog-label" style="font-size: 11px; color: #aaa;">SPEED</div>
                     <input type="range" id="sld-speed" min="5" max="100" value="50" step="5" style="flex-grow: 1; margin: 0 10px; accent-color: #ff9800;">
@@ -725,6 +730,21 @@ def build_embedded_viewport(payload):
                 }
             }
 
+            // --- JAVASCRIPT EVENT ACTION TRIGGER FOR RESET BUTTON ---
+            document.getElementById('btn-reset-pos').addEventListener('click', () => {
+                if(runSimulation) return;
+                // Reset joints 1 through 6 back to 0
+                for(let i = 1; i <= 6; i++) {
+                    localJointAngles[i] = 0.0;
+                }
+                refreshSceneDisplay(true);
+                
+                // Route message back up to Streamlit via clean URL Parameter hook
+                const targetUrl = new URL(window.parent.location.href);
+                targetUrl.searchParams.set("event", "reset_joints");
+                window.parent.location.href = targetUrl.toString();
+            });
+
             function updateUIElements() { document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length; }
             document.getElementById('sld-speed').addEventListener('input', (e) => { document.getElementById('val-speed').innerText = e.target.value + "%"; });
 
@@ -872,7 +892,6 @@ def build_embedded_viewport(payload):
                         isPinchActive = false;
                     }
 
-                    // --- AR OVERLAY PIP HUD GRAPHICS GENERATION ---
                     const screenX = palmCenter.x * arCanvas.width;
                     const screenY = palmCenter.y * arCanvas.height;
                     const baseScreenX = wrist.x * arCanvas.width;
