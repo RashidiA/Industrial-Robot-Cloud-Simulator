@@ -19,7 +19,7 @@ if 'j_angles' not in st.session_state:
 if 'program' not in st.session_state:
     st.session_state.program = []
 
-# --- 2. MULTI-ROBOT KINEMATICS REGISTRY ---
+# --- 2. MULTI-ROBOT KINEMATICS REGISTRY (RESTORED ORIGINAL COORDINATES) ---
 ROBOT_REGISTRY = {
     "ABB_6700": {
         "links": [
@@ -83,11 +83,11 @@ ROBOT_REGISTRY = {
     },
     "KUKA_KR150": {
         "links": [
-            {"name": "A1", "trans": [0.0, 0.0, 0.55],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 0, 1]},
-            {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
-            {"name": "A3", "trans": [1.3, 0.0, -0.05],  "orient": [0.0, 1.5708, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [2.40, 0.0, 0.1],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [-1.0, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A1", "trans": [0.0, 0.0, 0.75],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [0.0, 0.0, 1.25],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [1.40, 0.0, 0.15],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [0.21, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A6", "trans": [0.21, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.75, 0.5, 1.25, 0.35, 0.23, 0.21, 0.09],
@@ -107,7 +107,7 @@ ROBOT_REGISTRY = {
             {"name": "A2", "trans": [0.16, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [0.0, 0.0, 0.9],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A4", "trans": [0.0, 0.0, 0.21],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [1.0, 0.0, 0.0],    "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
+            {"name": "A5", "trans": [1.0, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A6", "trans": [0.0, 0.0, -0.17],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.70, 0.45, 1.15, 0.35, 0.18, 0.18, 0.10],
@@ -288,6 +288,7 @@ def build_embedded_viewport(payload):
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
         
+        <!-- MediaPipe Framework Layers -->
         <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
         <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
@@ -535,7 +536,7 @@ def build_embedded_viewport(payload):
                 let m4 = getLinkStructureBaseMatrix(dh[3]).multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
                 
-                if (data.profileName === "Yaskawa_3500") {
+                if (data.profileName === "Yaskawa_3500" || data.profileName === "KUKA_KR150") {
                     computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
                 } else {
                     let correctionMatrix = currentMatrix.clone();
@@ -558,19 +559,17 @@ def build_embedded_viewport(payload):
             }
 
             function executeCyclicInverseKinematics(targetGlobalPos) {
-                // Loop axes 1 through 5 to reach the positional vector coordinate safely
                 for (let iteration = 0; iteration < 12; iteration++) {
                     let currentTransforms = computeForwardKinematics(localJointAngles);
                     let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
                     if (errorDistance.length() < 0.0002) break;
 
-                    // Compute cyclic orientation changes strictly for positional links (1 to 5)
                     for (let j = 1; j <= 5; j++) {
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
-                        let axisVectorDirection = new THREE.Vector3(0, 1, 0); // Pitch configuration setup
-                        if (j === 1) axisVectorDirection.set(0, 0, 1);         // Yaw configuration setup
-                        if (j === 4) axisVectorDirection.set(1, 0, 0);         // Roll configuration setup
+                        let axisVectorDirection = new THREE.Vector3(0, 1, 0); 
+                        if (j === 1) axisVectorDirection.set(0, 0, 1);         
+                        if (j === 4) axisVectorDirection.set(1, 0, 0);         
 
                         let componentToEE = new THREE.Vector3().subVectors(endEffectorPos, jointPosition).normalize();
                         let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
@@ -587,14 +586,12 @@ def build_embedded_viewport(payload):
                     }
                 }
 
-                // --- PERSPECTIVE DRIFT ISOLATION FILTER FOR AXIS 5 ---
-                // Force Axis 5 (Pitch) to stabilize relative to its base limits when running via gesture mode
                 if (activeJogMode === "gesture") {
                     let rawA5 = localJointAngles[5];
-                    if (Math.abs(rawA5) < 0.15) { // 8-degree deadband range centered on neutral position
+                    if (Math.abs(rawA5) < 0.15) { 
                         localJointAngles[5] = 0.0;
                     } else {
-                        localJointAngles[5] = (rawA5 * 0.1) + (lastStableA5 * 0.9); // Deep low-pass dampening filter
+                        localJointAngles[5] = (rawA5 * 0.1) + (lastStableA5 * 0.9); 
                     }
                     lastStableA5 = localJointAngles[5];
                 }
@@ -790,11 +787,10 @@ def build_embedded_viewport(payload):
             let baselineTCPX = 1.0;    
             let anchorTCPPos = new THREE.Vector3();
             
-            // Filtering tracking matrices definitions
             let lastStableRoll = 0.0;
             let lastStableA5 = 0.0;
-            const SMOOTHING_FACTOR = 0.12;                  // High-dampening filter setup
-            const DEADBAND_RADIANS = 12 * (Math.PI / 180);  // 12-degree neutral zone cushion
+            const SMOOTHING_FACTOR = 0.12;                  
+            const DEADBAND_RADIANS = 12 * (Math.PI / 180);  
 
             function onHandResults(results) {
                 arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
@@ -809,7 +805,6 @@ def build_embedded_viewport(payload):
                     const indexBase = handLandmarks[5];
                     const pinkyBase = handLandmarks[17];
                     
-                    // --- 1. EXTRACT 3D POSITION INPUTS (Y, Z, AND X DEPTH) ---
                     let targetY = -(palmCenter.x - 0.5) * 2.5; 
                     let targetZ = (1.0 - palmCenter.y) * 2.0; 
 
@@ -822,47 +817,38 @@ def build_embedded_viewport(payload):
                     let targetX = baselineTCPX + (currentZDistance - initialZLength) * 4.0;
                     targetX = Math.max(0.3, Math.min(2.5, targetX)); 
 
-                    // --- 2. STABILIZED ISOLATION ROTATION FOR AXIS 6 (ROLL) ---
                     let rawRollAngle = Math.atan2(pinkyBase.y - indexBase.y, pinkyBase.x - indexBase.x);
                     
-                    // Force a strict flat baseline center coordinate inside the deadband zone
                     let processedRoll = rawRollAngle;
                     if (Math.abs(rawRollAngle) < DEADBAND_RADIANS) {
                         processedRoll = 0.0; 
                     }
 
-                    // Low-pass exponential smoothing execution
                     lastStableRoll = (processedRoll * SMOOTHING_FACTOR) + (lastStableRoll * (1 - SMOOTHING_FACTOR));
                     localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], lastStableRoll));
 
-                    // --- 3. RUN INVERSE KINEMATICS WITH INTERPOLATED POSE ---
                     anchorTCPPos.set(targetX, targetY, targetZ);
-                    // Smooth tracking updates to mitigate positional coordinates shifting
                     tcpAnchorPivot.position.lerp(anchorTCPPos, SMOOTHING_FACTOR); 
                     executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
-                    // --- 4. DRAW 2 HUD AR DIRECTIONAL ARROWS & RETICLE ---
                     const screenX = palmCenter.x * arCanvas.width;
                     const screenY = palmCenter.y * arCanvas.height;
 
                     arCtx.lineWidth = 4;
                     arCtx.lineCap = "round";
 
-                    // AR Green Arrow: Lateral Y Axis
                     arCtx.strokeStyle = "#4caf50";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
                     arCtx.lineTo(screenX + 45, screenY);
                     arCtx.stroke();
 
-                    // AR Blue Arrow: Vertical Z Axis
                     arCtx.strokeStyle = "#2196f3";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
                     arCtx.lineTo(screenX, screenY - 45);
                     arCtx.stroke();
 
-                    // Cyan Glow Tracker Reticle
                     arCtx.fillStyle = "#00ffcc";
                     arCtx.shadowColor = "#00ffcc";
                     arCtx.shadowBlur = 10;
