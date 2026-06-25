@@ -293,7 +293,7 @@ def build_embedded_viewport(payload):
 
         <style>
             body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; }
-            #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:2; pointer-events: auto; }
+            #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
             #status { position: absolute; top: 10px; left: 10px; color: #ffffff; font-size: 13px; background: rgba(20,20,20,0.8); padding: 6px 12px; border-radius:4px; border: 1px solid #333; z-index: 10; }
             #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 220px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
             .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
@@ -317,14 +317,17 @@ def build_embedded_viewport(payload):
             #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
             .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: bold; }
             
-            /* Enhanced True Full-Screen AR Viewport Layout */
+            /* Mirror-inverted container to hold both video and the AR HUD overlay canvas */
             .ar-viewport-container {
                 position: absolute;
-                top: 0;
-                left: 0;
-                width: 100vw;
-                height: 100vh;
-                z-index: 1;
+                bottom: 15px;
+                left: 15px;
+                width: 320px;
+                height: 240px;
+                border: 2px solid #ff9800;
+                border-radius: 6px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+                z-index: 10;
                 display: none;
                 overflow: hidden;
                 transform: scaleX(-1);
@@ -336,6 +339,7 @@ def build_embedded_viewport(payload):
                 position: absolute;
                 top: 0;
                 left: 0;
+                z-index: 11;
             }
             #ar-overlay-canvas {
                 width: 100%;
@@ -343,9 +347,8 @@ def build_embedded_viewport(payload):
                 position: absolute;
                 top: 0;
                 left: 0;
-                z-index: 3;
+                z-index: 12;
                 pointer-events: none;
-                transform: scaleX(-1); /* Corrects flip alignment back over hand */
             }
         </style>
     </head>
@@ -354,8 +357,8 @@ def build_embedded_viewport(payload):
         
         <div class="ar-viewport-container" id="ar-viewport">
             <video id="webcam-feedback" autoplay playsinline></video>
+            <canvas id="ar-overlay-canvas" width="320" height="240"></canvas>
         </div>
-        <canvas id="ar-overlay-canvas"></canvas>
 
         <div id="jog-pendant">
             <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
@@ -408,8 +411,7 @@ def build_embedded_viewport(payload):
             const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 100);
             camera.position.set(4.0, -4.0, 3.0);
 
-            // Added alpha true support to unlock background transparent masking for immersive AR Mode
-            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+            const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
             renderer.setSize(container.clientWidth, container.clientHeight);
             container.appendChild(renderer.domElement);
 
@@ -563,6 +565,9 @@ def build_embedded_viewport(payload):
                     if (errorDistance.length() < 0.0002) break;
 
                     for (let j = 1; j <= 6; j++) {
+                        // Bypass axis 6 tracking completely in gesture control loop
+                        if (activeJogMode === "gesture" && j === 6) continue;
+
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
                         let axisVectorDirection = new THREE.Vector3(0, 0, 1);
                         if (j === 2 || j === 3 || j === 5) axisVectorDirection.set(0, 1, 0);
@@ -574,6 +579,14 @@ def build_embedded_viewport(payload):
                         let angleScalarDot = componentToEE.dot(componentToTarget);
                         let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.12;
                         
+                        // Apply movement damping factors to axis 5 and 6
+                        if (j === 5) {
+                            localizedDeltaTheta *= 0.25; 
+                        }
+                        if (j === 6) {
+                            localizedDeltaTheta *= 0.35;
+                        }
+
                         if (localizedDeltaTheta > 0.0001) {
                             let directionalCross = new THREE.Vector3().crossVectors(componentToEE, componentToTarget);
                             if (directionalCross.dot(axisVectorDirection) < 0) { localJointAngles[j] -= localizedDeltaTheta; }
@@ -629,23 +642,12 @@ def build_embedded_viewport(payload):
             
             const arContainer = document.getElementById("ar-viewport");
             const videoElement = document.getElementById("webcam-feedback");
-            const arCanvas = document.getElementById("ar-overlay-canvas");
-            const arCtx = arCanvas.getContext("2d");
-
-            function resizeOverlayCanvas() {
-                arCanvas.width = window.innerWidth;
-                arCanvas.height = window.innerHeight;
-            }
-            window.addEventListener('resize', resizeOverlayCanvas);
-            resizeOverlayCanvas();
 
             btnJoint.addEventListener("click", () => {
                 activeJogMode = "joint"; 
                 btnJoint.classList.add("active"); btnTCP.classList.remove("active"); btnGesture.classList.remove("active");
                 rowsWrap.style.display = "block"; hudMonitor.style.display = "none"; arContainer.style.display = "none";
-                arCanvas.style.display = "none";
                 transformGizmo.visible = false; transformGizmo.enabled = false;
-                scene.background = new THREE.Color(0x111111); grid.visible = true;
                 stopWebcam();
             });
 
@@ -653,9 +655,7 @@ def build_embedded_viewport(payload):
                 activeJogMode = "tcp"; 
                 btnTCP.classList.add("active"); btnJoint.classList.remove("active"); btnGesture.classList.remove("active");
                 rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "none";
-                arCanvas.style.display = "none";
                 transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
-                scene.background = new THREE.Color(0x111111); grid.visible = true;
                 stopWebcam();
             });
 
@@ -663,9 +663,7 @@ def build_embedded_viewport(payload):
                 activeJogMode = "gesture";
                 btnGesture.classList.add("active"); btnJoint.classList.remove("active"); btnTCP.classList.remove("active");
                 rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "block";
-                arCanvas.style.display = "block";
                 transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
-                scene.background = null; grid.visible = false; // Makes ThreeJS background clear for full-screen AR tracking
                 startWebcam();
             });
 
@@ -753,7 +751,7 @@ def build_embedded_viewport(payload):
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
                     if(activeJogMode === "gesture") {
-                        document.getElementById('status').innerText = "Status: Immersive AR Control Active (Tracking Hand)";
+                        document.getElementById('status').innerText = "Status: Gesture Control Active (Move Hand)";
                     } else {
                         document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
                     }
@@ -782,9 +780,11 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // --- GESTURE PROCESSING ENGINE (MEDIAPIPE WITH IMMERSIVE AR VIEWPORT HUD) ---
+            // --- GESTURE PROCESSING ENGINE (MEDIAPIPE WITH AR OVERLAY HUD) ---
             let mpHands = null;
             let mpCamera = null;
+            const arCanvas = document.getElementById("ar-overlay-canvas");
+            const arCtx = arCanvas.getContext("2d");
             let anchorTCPPos = new THREE.Vector3();
 
             function onHandResults(results) {
@@ -807,10 +807,28 @@ def build_embedded_viewport(payload):
                     tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15);
                     executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
-                    // --- 2. FULL VIEWPORT 2D/3D AR OVERLAY HUD GENERATOR ---
-                    const screenX = (1.0 - palmCenter.x) * arCanvas.width; // Flip horizontally to match full-bleed scale
+                    // --- 1B. DIRECT COUPLING: AXIS 6 ORIENTATION MODULATION VIA PALM ROLL MATRIX ---
+                    const p5 = handLandmarks[5];
+                    const p17 = handLandmarks[17];
+                    let currentRoll = Math.atan2(p17.y - p5.y, p17.x - p5.x);
+                    
+                    if (window.lastHandRoll === undefined) {
+                        window.lastHandRoll = currentRoll;
+                    }
+                    let deltaRoll = currentRoll - window.lastHandRoll;
+                    if (deltaRoll > Math.PI) deltaRoll -= 2 * Math.PI;
+                    if (deltaRoll < -Math.PI) deltaRoll += 2 * Math.PI;
+                    window.lastHandRoll = currentRoll;
+
+                    if (Math.abs(deltaRoll) > 0.005) {
+                        localJointAngles[6] += deltaRoll * 0.45; // Damped execution matching user intent
+                        localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], localJointAngles[6]));
+                    }
+
+                    // --- 2. 2D/3D AR OVERLAY HUD GENERATOR ---
+                    const screenX = palmCenter.x * arCanvas.width;
                     const screenY = palmCenter.y * arCanvas.height;
-                    const baseScreenX = (1.0 - wrist.x) * arCanvas.width;
+                    const baseScreenX = wrist.x * arCanvas.width;
                     const baseScreenY = wrist.y * arCanvas.height;
 
                     const dirX = screenX - baseScreenX;
@@ -823,31 +841,31 @@ def build_embedded_viewport(payload):
                     const nX = -uY;
                     const nY = uX;
 
-                    const arrowLength = Math.max(50, distance * 0.8);
+                    const arrowLength = Math.max(30, distance * 0.7);
 
-                    arCtx.lineWidth = 5;
+                    arCtx.lineWidth = 4;
                     arCtx.lineCap = "round";
 
-                    // Z-Axis Alignment Control Arrow (Blue)
+                    // Z-Axis Alignment Arrow (Blue)
                     arCtx.strokeStyle = "#2196f3";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
                     arCtx.lineTo(screenX + uX * arrowLength, screenY + uY * arrowLength);
                     arCtx.stroke();
 
-                    // X-Axis Lateral Control Arrow (Red)
+                    // X-Axis Lateral Arrow (Red)
                     arCtx.strokeStyle = "#f44336";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
                     arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7));
                     arCtx.stroke();
 
-                    // Center Targeting TCP Reticle (Cyan Glow Tracking Ring)
+                    // Center Targeting Reticle (Cyan Glow)
                     arCtx.fillStyle = "#00ffcc";
                     arCtx.shadowColor = "#00ffcc";
-                    arCtx.shadowBlur = 15;
+                    arCtx.shadowBlur = 10;
                     arCtx.beginPath();
-                    arCtx.arc(screenX, screenY, 8, 0, 2 * Math.PI);
+                    arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI);
                     arCtx.fill();
                     
                     arCtx.shadowBlur = 0;
@@ -875,8 +893,8 @@ def build_embedded_viewport(payload):
                                 await mpHands.send({ image: videoElement });
                             }
                         },
-                        width: 640,
-                        height: 480
+                        width: 320,
+                        height: 240
                     });
                 }
                 mpCamera.start().catch(err => {
