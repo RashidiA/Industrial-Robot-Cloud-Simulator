@@ -34,7 +34,7 @@ ROBOT_REGISTRY = {
         "limits": [
             [-np.pi, np.pi],               # A1: ±180°
             [-1.047, 1.483],               # A2: -60° to +85°
-            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-1.3962, 1.3962],             # A3: -80° to +80° ONLY
             [-6.108, 6.108],               # A4: ±350°
             [-2.181, 2.181],               # A5: ±125°
             [-6.108, 6.108],               # A6: ±350°
@@ -223,7 +223,6 @@ with st.sidebar:
         j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
         js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
-    # --- 6B. END-EFFECTOR TOOLING LIBRARY ---
     with st.expander("⚙️ End-Effector Tooling Library", expanded=True):
         tool_source = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"])
         selected_tool_path = None
@@ -317,7 +316,6 @@ def build_embedded_viewport(payload):
             #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
             .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: bold; }
             
-            /* Mirror-inverted container to hold both video and the AR HUD overlay canvas */
             .ar-viewport-container {
                 position: absolute;
                 bottom: 15px;
@@ -350,18 +348,45 @@ def build_embedded_viewport(payload):
                 z-index: 12;
                 pointer-events: none;
             }
+            
+            /* --- REMARKS / INSTRUCTION HUD HEADER FOR CAMERA VIEWPORT --- */
+            .ar-gesture-remarks-hud {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                border-bottom: 1px solid #ff9800;
+                color: #ffffff;
+                font-size: 11px;
+                text-align: center;
+                padding: 5px 0;
+                font-family: 'Segoe UI', sans-serif;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+                z-index: 20;
+                transform: scaleX(-1); /* Corrects mirror text flipping due to parent video feed mirroring */
+            }
+            .ar-gesture-remarks-hud span {
+                color: #ff9800;
+                font-weight: bold;
+            }
         </style>
     </head>
     <body>
         <div id="status">WebGL Processing...</div>
         
         <div class="ar-viewport-container" id="ar-viewport">
+            <!-- Continuous Instruction HUD Banner Layer -->
+            <div class="ar-gesture-remarks-hud">
+                💡 PINCH <span>THUMB & INDEX</span> TO RECORD STEP POSITION
+            </div>
             <video id="webcam-feedback" autoplay playsinline></video>
             <canvas id="ar-overlay-canvas" width="320" height="240"></canvas>
         </div>
 
         <div id="jog-pendant">
-            <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
+            <div class="pendant-title">⚡ HYBRID ULTIMATE PENDANT</div>
             <div class="mode-container">
                 <button id="mode-joint" class="mode-btn active">Joint</button>
                 <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
@@ -565,7 +590,6 @@ def build_embedded_viewport(payload):
                     if (errorDistance.length() < 0.0002) break;
 
                     for (let j = 1; j <= 6; j++) {
-                        // Bypass axis 6 tracking completely in gesture control loop
                         if (activeJogMode === "gesture" && j === 6) continue;
 
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
@@ -579,13 +603,8 @@ def build_embedded_viewport(payload):
                         let angleScalarDot = componentToEE.dot(componentToTarget);
                         let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.12;
                         
-                        // Apply movement damping factors to axis 5 and 6
-                        if (j === 5) {
-                            localizedDeltaTheta *= 0.25; 
-                        }
-                        if (j === 6) {
-                            localizedDeltaTheta *= 0.35;
-                        }
+                        if (j === 5) localizedDeltaTheta *= 0.25; 
+                        if (j === 6) localizedDeltaTheta *= 0.35;
 
                         if (localizedDeltaTheta > 0.0001) {
                             let directionalCross = new THREE.Vector3().crossVectors(componentToEE, componentToTarget);
@@ -626,6 +645,17 @@ def build_embedded_viewport(payload):
                     let displayElement = document.getElementById(`val-${i}`);
                     if (displayElement) { displayElement.innerText = `${(localJointAngles[i] * (180 / Math.PI)).toFixed(1)}°`; }
                 }
+            }
+
+            function triggerManualStepRecord() {
+                if(runSimulation) return;
+                lastComputedTransforms = computeForwardKinematics(localJointAngles);
+                embeddedTrajectory.push({ angles: [...localJointAngles], transforms: JSON.parse(JSON.stringify(lastComputedTransforms)) });
+                updateUIElements();
+                const targetUrl = new URL(window.parent.location.href);
+                targetUrl.searchParams.set("event", "sync_sequence");
+                targetUrl.searchParams.set("program_data", JSON.stringify(embeddedTrajectory));
+                window.parent.history.replaceState({}, '', targetUrl.toString());
             }
 
             function updateMonitorHUDText(vectorPos) {
@@ -698,16 +728,7 @@ def build_embedded_viewport(payload):
             function updateUIElements() { document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length; }
             document.getElementById('sld-speed').addEventListener('input', (e) => { document.getElementById('val-speed').innerText = e.target.value + "%"; });
 
-            document.getElementById('btn-save-step').addEventListener('click', () => {
-                if(runSimulation) return;
-                lastComputedTransforms = computeForwardKinematics(localJointAngles);
-                embeddedTrajectory.push({ angles: [...localJointAngles], transforms: JSON.parse(JSON.stringify(lastComputedTransforms)) });
-                updateUIElements();
-                const targetUrl = new URL(window.parent.location.href);
-                targetUrl.searchParams.set("event", "sync_sequence");
-                targetUrl.searchParams.set("program_data", JSON.stringify(embeddedTrajectory));
-                window.parent.history.replaceState({}, '', targetUrl.toString());
-            });
+            document.getElementById('btn-save-step').addEventListener('click', triggerManualStepRecord);
 
             document.getElementById('btn-run-sim').addEventListener('click', () => {
                 if(embeddedTrajectory.length < 2) { alert("Please record at least 2 structural step points."); return; }
@@ -751,7 +772,7 @@ def build_embedded_viewport(payload):
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
                     if(activeJogMode === "gesture") {
-                        document.getElementById('status').innerText = "Status: Gesture Control Active (Move Hand)";
+                        document.getElementById('status').innerText = "Status: Hybrid Gesture Control Active";
                     } else {
                         document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
                     }
@@ -780,25 +801,26 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // --- GESTURE PROCESSING ENGINE (MEDIAPIPE WITH AR OVERLAY HUD) ---
+            // --- 8. HYBRID GESTURE PROCESSING ENGINE ---
             let mpHands = null;
             let mpCamera = null;
             const arCanvas = document.getElementById("ar-overlay-canvas");
             const arCtx = arCanvas.getContext("2d");
+            
             let anchorTCPPos = new THREE.Vector3();
+            let isPinchActive = false; 
+            let lastPinchTime = 0;
 
             function onHandResults(results) {
                 arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
-                
                 if (activeJogMode !== "gesture" || runSimulation) return;
                 
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const handLandmarks = results.multiHandLandmarks[0];
                     
-                    const wrist = handLandmarks[0];
                     const palmCenter = handLandmarks[9];
+                    const wrist = handLandmarks[0];
                     
-                    // --- 1. ROBOT TCP CONTROL INTERPOLATION ---
                     let targetY = -(palmCenter.x - 0.5) * 2.5; 
                     let targetZ = (1.0 - palmCenter.y) * 2.0; 
                     let targetX = 0.5 + (1.0 - palmCenter.z) * 1.5; 
@@ -807,9 +829,8 @@ def build_embedded_viewport(payload):
                     tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15);
                     executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
-                    // --- 1B. DIRECT COUPLING: AXIS 6 ORIENTATION MODULATION VIA PALM ROLL MATRIX ---
-                    const p5 = handLandmarks[5];
-                    const p17 = handLandmarks[17];
+                    const p5 = handLandmarks[5];   
+                    const p17 = handLandmarks[17]; 
                     let currentRoll = Math.atan2(p17.y - p5.y, p17.x - p5.x);
                     
                     if (window.lastHandRoll === undefined) {
@@ -821,11 +842,37 @@ def build_embedded_viewport(payload):
                     window.lastHandRoll = currentRoll;
 
                     if (Math.abs(deltaRoll) > 0.005) {
-                        localJointAngles[6] += deltaRoll * 0.45; // Damped execution matching user intent
+                        localJointAngles[6] += deltaRoll * 0.45; 
                         localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], localJointAngles[6]));
                     }
 
-                    // --- 2. 2D/3D AR OVERLAY HUD GENERATOR ---
+                    const thumbTip = handLandmarks[4];
+                    const indexTip = handLandmarks[8];
+                    
+                    let dx = thumbTip.x - indexTip.x;
+                    let dy = thumbTip.y - indexTip.y;
+                    let dz = thumbTip.z - indexTip.z;
+                    let pinchDistance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+                    if (pinchDistance < 0.045) {
+                        if (!isPinchActive) {
+                            let currentTime = Date.now();
+                            if (currentTime - lastPinchTime > 1200) { 
+                                isPinchActive = true;
+                                lastPinchTime = currentTime;
+                                triggerManualStepRecord();
+                                
+                                document.getElementById('status').style.background = "rgba(76, 175, 80, 0.95)";
+                                setTimeout(() => {
+                                    document.getElementById('status').style.background = "rgba(20,20,20,0.8)";
+                                }, 400);
+                            }
+                        }
+                    } else {
+                        isPinchActive = false;
+                    }
+
+                    // --- AR OVERLAY PIP HUD GRAPHICS GENERATION ---
                     const screenX = palmCenter.x * arCanvas.width;
                     const screenY = palmCenter.y * arCanvas.height;
                     const baseScreenX = wrist.x * arCanvas.width;
@@ -837,7 +884,6 @@ def build_embedded_viewport(payload):
                     
                     const uX = dirX / (distance || 1);
                     const uY = dirY / (distance || 1);
-                    
                     const nX = -uY;
                     const nY = uX;
 
@@ -846,26 +892,23 @@ def build_embedded_viewport(payload):
                     arCtx.lineWidth = 4;
                     arCtx.lineCap = "round";
 
-                    // Z-Axis Alignment Arrow (Blue)
                     arCtx.strokeStyle = "#2196f3";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
                     arCtx.lineTo(screenX + uX * arrowLength, screenY + uY * arrowLength);
                     arCtx.stroke();
 
-                    // X-Axis Lateral Arrow (Red)
                     arCtx.strokeStyle = "#f44336";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
                     arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7));
                     arCtx.stroke();
 
-                    // Center Targeting Reticle (Cyan Glow)
-                    arCtx.fillStyle = "#00ffcc";
-                    arCtx.shadowColor = "#00ffcc";
-                    arCtx.shadowBlur = 10;
+                    arCtx.fillStyle = isPinchActive ? "#4caf50" : "#00ffcc";
+                    arCtx.shadowColor = isPinchActive ? "#4caf50" : "#00ffcc";
+                    arCtx.shadowBlur = isPinchActive ? 18 : 10;
                     arCtx.beginPath();
-                    arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI);
+                    arCtx.arc(screenX, screenY, isPinchActive ? 8 : 6, 0, 2 * Math.PI);
                     arCtx.fill();
                     
                     arCtx.shadowBlur = 0;
