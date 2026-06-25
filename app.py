@@ -32,13 +32,13 @@ ROBOT_REGISTRY = {
         ],
         "fallback_heights": [0.78, 0.5, 1.28, 0.4, 0.2, 0.2, 0.1],
         "limits": [
-            [-np.pi, np.pi],               # A1: ±180°
-            [-1.047, 1.483],               # A2: -60° to +85°
-            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
-            [-6.108, 6.108],               # A4: ±350°
-            [-2.181, 2.181],               # A5: ±125°
-            [-6.108, 6.108],               # A6: ±350°
-            [-np.pi, np.pi]                # E1: ±180°
+            [-np.pi, np.pi],               
+            [-1.047, 1.483],               
+            [-1.3962, 1.3962],             
+            [-6.108, 6.108],               
+            [-2.181, 2.181],               
+            [-6.108, 6.108],               
+            [-np.pi, np.pi]                
         ]
     },
     "ABB_4400": {
@@ -317,7 +317,7 @@ def build_embedded_viewport(payload):
             #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
             .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: bold; }
             
-            /* Mirror-inverted container to hold both video and the AR HUD overlay canvas */
+            /* Mirror-inverted container to hold both video layer and overlay HUD canvas */
             .ar-viewport-container {
                 position: absolute;
                 bottom: 15px;
@@ -330,7 +330,8 @@ def build_embedded_viewport(payload):
                 z-index: 10;
                 display: none;
                 overflow: hidden;
-                transform: scaleX(-1);
+                transform: scaleX(-1); /* Mirrors webcam for intuitive control */
+                background: #000;
             }
             #webcam-feedback {
                 width: 100%;
@@ -365,7 +366,7 @@ def build_embedded_viewport(payload):
             <div class="mode-container">
                 <button id="mode-joint" class="mode-btn active">Joint</button>
                 <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
-                <button id="mode-gesture" class="mode-btn">✋ Gesture</button>
+                <button id="mode-gesture" class="mode-btn" style="border-color: #00ffcc; color: #00ffcc;">✋ Gesture</button>
             </div>
             <div id="tcp-monitor">
                 <div style="color: #00ffcc; font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
@@ -528,8 +529,8 @@ def build_embedded_viewport(payload):
                 currentMatrix.multiply(m2);
                 computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                let m2_adj = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
-                currentMatrix.multiply(m2_adj);
+                let m3 = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+                currentMatrix.multiply(m3);
                 computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
                 let m4 = getLinkStructureBaseMatrix(dh[3]).multiply(new THREE.Matrix4().makeRotationX(angles[4]));
@@ -628,31 +629,27 @@ def build_embedded_viewport(payload):
             const btnGesture = document.getElementById("mode-gesture");
             const rowsWrap = document.getElementById("joint-jog-container");
             const hudMonitor = document.getElementById("tcp-monitor");
-            
             const arContainer = document.getElementById("ar-viewport");
             const videoElement = document.getElementById("webcam-feedback");
 
             btnJoint.addEventListener("click", () => {
-                activeJogMode = "joint"; 
-                btnJoint.classList.add("active"); btnTCP.classList.remove("active"); btnGesture.classList.remove("active");
+                activeJogMode = "joint"; btnJoint.classList.add("active"); btnTCP.classList.remove("active"); btnGesture.classList.remove("active");
                 rowsWrap.style.display = "block"; hudMonitor.style.display = "none"; arContainer.style.display = "none";
                 transformGizmo.visible = false; transformGizmo.enabled = false;
                 stopWebcam();
             });
 
             btnTCP.addEventListener("click", () => {
-                activeJogMode = "tcp"; 
-                btnTCP.classList.add("active"); btnJoint.classList.remove("active"); btnGesture.classList.remove("active");
+                activeJogMode = "tcp"; btnTCP.classList.add("active"); btnJoint.classList.remove("active"); btnGesture.classList.remove("active");
                 rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "none";
                 transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
                 stopWebcam();
             });
 
             btnGesture.addEventListener("click", () => {
-                activeJogMode = "gesture";
-                btnGesture.classList.add("active"); btnJoint.classList.remove("active"); btnTCP.classList.remove("active");
+                activeJogMode = "gesture"; btnGesture.classList.add("active"); btnJoint.classList.remove("active"); btnTCP.classList.remove("active");
                 rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "block";
-                transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
+                transformGizmo.visible = false; transformGizmo.enabled = false; refreshSceneDisplay(true);
                 startWebcam();
             });
 
@@ -769,14 +766,18 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // --- GESTURE PROCESSING ENGINE (MEDIAPIPE WITH AR OVERLAY HUD) ---
+            // --- GESTURE PROCESSING ENGINE WITH HUD AR CANVAS OVERLAY ---
             let mpHands = null;
             let mpCamera = null;
             const arCanvas = document.getElementById("ar-overlay-canvas");
             const arCtx = arCanvas.getContext("2d");
+            
+            let initialZLength = null; 
+            let baselineTCPX = 1.0;    
             let anchorTCPPos = new THREE.Vector3();
 
             function onHandResults(results) {
+                // Clear overlay layer every cycle frame
                 arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
                 
                 if (activeJogMode !== "gesture" || runSimulation) return;
@@ -786,60 +787,65 @@ def build_embedded_viewport(payload):
                     
                     const wrist = handLandmarks[0];
                     const palmCenter = handLandmarks[9];
+                    const indexBase = handLandmarks[5];
+                    const pinkyBase = handLandmarks[17];
                     
-                    // --- 1. ROBOT TCP CONTROL INTERPOLATION ---
+                    // --- 1. EXTRACT 3D POSITION INPUTS (Y, Z, AND X DEPTH) ---
                     let targetY = -(palmCenter.x - 0.5) * 2.5; 
                     let targetZ = (1.0 - palmCenter.y) * 2.0; 
-                    let targetX = 0.5 + (1.0 - palmCenter.z) * 1.5; 
 
+                    // Compute pixel scalar length distance between landmarks for depth tracking
+                    const currentZDistance = Math.sqrt(Math.pow(palmCenter.x - wrist.x, 2) + Math.pow(palmCenter.y - wrist.y, 2));
+                    if (initialZLength === null) {
+                        initialZLength = currentZDistance;
+                        baselineTCPX = tcpAnchorPivot.position.x;
+                    }
+
+                    // Map delta distance to push forward / backward along the simulator's X axis
+                    let targetX = baselineTCPX + (currentZDistance - initialZLength) * 4.0;
+                    targetX = Math.max(0.3, Math.min(2.5, targetX)); 
+
+                    // --- 2. EXTRACT 6TH AXIS SYMMETRIC ROTATION (A6 SYNC) ---
+                    let handRollAngle = Math.atan2(pinkyBase.y - indexBase.y, pinkyBase.x - indexBase.x);
+                    // Match limits constraints of hardware configurations registry array
+                    localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], handRollAngle));
+
+                    // --- 3. TRIGGER CYCLIC INVERSE KINEMATICS MATRIX ---
                     anchorTCPPos.set(targetX, targetY, targetZ);
-                    tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15);
+                    tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15); // Smooth lerp filtering input jitter
                     executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
-                    // --- 2. 2D/3D AR OVERLAY HUD GENERATOR ---
+                    // --- 4. DRAW 2 HUD AR DIRECTIONAL ARROWS & RETICLE ---
                     const screenX = palmCenter.x * arCanvas.width;
                     const screenY = palmCenter.y * arCanvas.height;
-                    const baseScreenX = wrist.x * arCanvas.width;
-                    const baseScreenY = wrist.y * arCanvas.height;
-
-                    const dirX = screenX - baseScreenX;
-                    const dirY = screenY - baseScreenY;
-                    const distance = Math.sqrt(dirX * dirX + dirY * dirY);
-                    
-                    const uX = dirX / (distance || 1);
-                    const uY = dirY / (distance || 1);
-                    
-                    const nX = -uY;
-                    const nY = uX;
-
-                    const arrowLength = Math.max(30, distance * 0.7);
 
                     arCtx.lineWidth = 4;
                     arCtx.lineCap = "round";
 
-                    // Z-Axis Alignment Arrow (Blue)
+                    // AR Green Arrow: Representing Y-Axis movement (lateral direction)
+                    arCtx.strokeStyle = "#4caf50";
+                    arCtx.beginPath();
+                    arCtx.moveTo(screenX, screenY);
+                    arCtx.lineTo(screenX + 45, screenY);
+                    arCtx.stroke();
+
+                    // AR Blue Arrow: Representing Z-Axis movement (vertical height direction)
                     arCtx.strokeStyle = "#2196f3";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
-                    arCtx.lineTo(screenX + uX * arrowLength, screenY + uY * arrowLength);
+                    arCtx.lineTo(screenX, screenY - 45);
                     arCtx.stroke();
 
-                    // X-Axis Lateral Arrow (Red)
-                    arCtx.strokeStyle = "#f44336";
-                    arCtx.beginPath();
-                    arCtx.moveTo(screenX, screenY);
-                    arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7));
-                    arCtx.stroke();
-
-                    // Center Targeting Reticle (Cyan Glow)
+                    // Target Tracking Reticle Circle (Cyan Glow)
                     arCtx.fillStyle = "#00ffcc";
                     arCtx.shadowColor = "#00ffcc";
                     arCtx.shadowBlur = 10;
                     arCtx.beginPath();
                     arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI);
                     arCtx.fill();
-                    
-                    arCtx.shadowBlur = 0;
+                    arCtx.shadowBlur = 0; // Reset shadows context immediately
+                } else {
+                    initialZLength = null; // Clear cache reference frame if hand tracks out of bounds
                 }
             }
 
@@ -869,7 +875,7 @@ def build_embedded_viewport(payload):
                     });
                 }
                 mpCamera.start().catch(err => {
-                    alert("Camera access denied or unavailable: " + err);
+                    alert("Webcam device initialization fault: " + err);
                 });
             }
 
