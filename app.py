@@ -19,7 +19,7 @@ if 'j_angles' not in st.session_state:
 if 'program' not in st.session_state:
     st.session_state.program = []
 
-# --- 2. MULTI-ROBOT KINEMATICS REGISTRY (RESTORED ORIGINAL COORDINATES) ---
+# --- 2. MULTI-ROBOT KINEMATICS REGISTRY ---
 ROBOT_REGISTRY = {
     "ABB_6700": {
         "links": [
@@ -32,13 +32,13 @@ ROBOT_REGISTRY = {
         ],
         "fallback_heights": [0.78, 0.5, 1.28, 0.4, 0.2, 0.2, 0.1],
         "limits": [
-            [-np.pi, np.pi],               
-            [-1.047, 1.483],               
-            [-1.3962, 1.3962],             
-            [-6.108, 6.108],               
-            [-2.181, 2.181],               
-            [-6.108, 6.108],               
-            [-np.pi, np.pi]                
+            [-np.pi, np.pi],               # A1: ±180°
+            [-1.047, 1.483],               # A2: -60° to +85°
+            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-6.108, 6.108],               # A4: ±350°
+            [-2.181, 2.181],               # A5: ±125°
+            [-6.108, 6.108],               # A6: ±350°
+            [-np.pi, np.pi]                # E1: ±180°
         ]
     },
     "ABB_4400": {
@@ -83,11 +83,11 @@ ROBOT_REGISTRY = {
     },
     "KUKA_KR150": {
         "links": [
-            {"name": "A1", "trans": [0.0, 0.0, 0.75],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
-            {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A3", "trans": [0.0, 0.0, 1.25],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
-            {"name": "A4", "trans": [1.40, 0.0, 0.15],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [0.21, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A1", "trans": [0.0, 0.0, 0.55],   "orient": [0.0, 0.0, 0.0], "rot": [0, 0, 1]},
+            {"name": "A2", "trans": [0.35, 0.0, 0.0],   "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
+            {"name": "A3", "trans": [1.3, 0.0, -0.05],  "orient": [0.0, 1.5708, 0.0], "rot": [0, 1, 0]},
+            {"name": "A4", "trans": [2.40, 0.0, 0.1],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
+            {"name": "A5", "trans": [-1.0, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A6", "trans": [0.21, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.75, 0.5, 1.25, 0.35, 0.23, 0.21, 0.09],
@@ -107,7 +107,7 @@ ROBOT_REGISTRY = {
             {"name": "A2", "trans": [0.16, 0.0, 0.0],   "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A3", "trans": [0.0, 0.0, 0.9],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
             {"name": "A4", "trans": [0.0, 0.0, 0.21],   "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
-            {"name": "A5", "trans": [1.0, 0.0, 0.0],    "orient": [0.0, 0.0, 0.0], "rot": [0, 1, 0]},
+            {"name": "A5", "trans": [1.0, 0.0, 0.0],    "orient": [0.0, -1.5708, 0.0], "rot": [0, 1, 0]},
             {"name": "A6", "trans": [0.0, 0.0, -0.17],  "orient": [0.0, 0.0, 0.0], "rot": [1, 0, 0]},
         ],
         "fallback_heights": [0.70, 0.45, 1.15, 0.35, 0.18, 0.18, 0.10],
@@ -288,7 +288,6 @@ def build_embedded_viewport(payload):
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
         
-        <!-- MediaPipe Framework Layers -->
         <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
         <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
@@ -331,7 +330,6 @@ def build_embedded_viewport(payload):
                 display: none;
                 overflow: hidden;
                 transform: scaleX(-1);
-                background: #000;
             }
             #webcam-feedback {
                 width: 100%;
@@ -366,7 +364,7 @@ def build_embedded_viewport(payload):
             <div class="mode-container">
                 <button id="mode-joint" class="mode-btn active">Joint</button>
                 <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
-                <button id="mode-gesture" class="mode-btn" style="border-color: #00ffcc; color: #00ffcc;">✋ Gesture</button>
+                <button id="mode-gesture" class="mode-btn">✋ Gesture</button>
             </div>
             <div id="tcp-monitor">
                 <div style="color: #00ffcc; font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
@@ -454,7 +452,7 @@ def build_embedded_viewport(payload):
             });
 
             transformGizmo.addEventListener('objectChange', function () {
-                if (activeJogMode !== "tcp" || runSimulation) return;
+                if ((activeJogMode !== "tcp" && activeJogMode !== "gesture") || runSimulation) return;
                 executeCyclicInverseKinematics(tcpAnchorPivot.position);
             });
 
@@ -529,21 +527,13 @@ def build_embedded_viewport(payload):
                 currentMatrix.multiply(m2);
                 computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                let m3 = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
-                currentMatrix.multiply(m3);
+                let m2_adj = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+                currentMatrix.multiply(m2_adj);
                 computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
                 let m4 = getLinkStructureBaseMatrix(dh[3]).multiply(new THREE.Matrix4().makeRotationX(angles[4]));
                 currentMatrix.multiply(m4);
-                
-                if (data.profileName === "Yaskawa_3500" || data.profileName === "KUKA_KR150") {
-                    computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
-                } else {
-                    let correctionMatrix = currentMatrix.clone();
-                    let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
-                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
-                    computedTransforms.push({ pos: fixedPos.toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
-                }
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
                 let m5 = getLinkStructureBaseMatrix(dh[4]).multiply(new THREE.Matrix4().makeRotationY(angles[5]));
                 currentMatrix.multiply(m5);
@@ -565,11 +555,11 @@ def build_embedded_viewport(payload):
                     let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
                     if (errorDistance.length() < 0.0002) break;
 
-                    for (let j = 1; j <= 5; j++) {
+                    for (let j = 1; j <= 6; j++) {
                         let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
-                        let axisVectorDirection = new THREE.Vector3(0, 1, 0); 
-                        if (j === 1) axisVectorDirection.set(0, 0, 1);         
-                        if (j === 4) axisVectorDirection.set(1, 0, 0);         
+                        let axisVectorDirection = new THREE.Vector3(0, 0, 1);
+                        if (j === 2 || j === 3 || j === 5) axisVectorDirection.set(0, 1, 0);
+                        if (j === 4 || (j === 6 && data.profileName !== "Yaskawa_3500")) axisVectorDirection.set(1, 0, 0);
 
                         let componentToEE = new THREE.Vector3().subVectors(endEffectorPos, jointPosition).normalize();
                         let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
@@ -585,17 +575,6 @@ def build_embedded_viewport(payload):
                         }
                     }
                 }
-
-                if (activeJogMode === "gesture") {
-                    let rawA5 = localJointAngles[5];
-                    if (Math.abs(rawA5) < 0.15) { 
-                        localJointAngles[5] = 0.0;
-                    } else {
-                        localJointAngles[5] = (rawA5 * 0.1) + (lastStableA5 * 0.9); 
-                    }
-                    lastStableA5 = localJointAngles[5];
-                }
-
                 refreshSceneDisplay(false);
                 updateMonitorHUDText(targetGlobalPos);
             }
@@ -640,27 +619,31 @@ def build_embedded_viewport(payload):
             const btnGesture = document.getElementById("mode-gesture");
             const rowsWrap = document.getElementById("joint-jog-container");
             const hudMonitor = document.getElementById("tcp-monitor");
+            
             const arContainer = document.getElementById("ar-viewport");
             const videoElement = document.getElementById("webcam-feedback");
 
             btnJoint.addEventListener("click", () => {
-                activeJogMode = "joint"; btnJoint.classList.add("active"); btnTCP.classList.remove("active"); btnGesture.classList.remove("active");
+                activeJogMode = "joint"; 
+                btnJoint.classList.add("active"); btnTCP.classList.remove("active"); btnGesture.classList.remove("active");
                 rowsWrap.style.display = "block"; hudMonitor.style.display = "none"; arContainer.style.display = "none";
                 transformGizmo.visible = false; transformGizmo.enabled = false;
                 stopWebcam();
             });
 
             btnTCP.addEventListener("click", () => {
-                activeJogMode = "tcp"; btnTCP.classList.add("active"); btnJoint.classList.remove("active"); btnGesture.classList.remove("active");
+                activeJogMode = "tcp"; 
+                btnTCP.classList.add("active"); btnJoint.classList.remove("active"); btnGesture.classList.remove("active");
                 rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "none";
                 transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
                 stopWebcam();
             });
 
             btnGesture.addEventListener("click", () => {
-                activeJogMode = "gesture"; btnGesture.classList.add("active"); btnJoint.classList.remove("active"); btnTCP.classList.remove("active");
+                activeJogMode = "gesture";
+                btnGesture.classList.add("active"); btnJoint.classList.remove("active"); btnTCP.classList.remove("active");
                 rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "block";
-                transformGizmo.visible = false; transformGizmo.enabled = false; refreshSceneDisplay(true);
+                transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
                 startWebcam();
             });
 
@@ -777,20 +760,12 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // --- GESTURE PROCESSING ENGINE WITH HUD AR CANVAS OVERLAY ---
+            // --- GESTURE PROCESSING ENGINE (MEDIAPIPE WITH AR OVERLAY HUD) ---
             let mpHands = null;
             let mpCamera = null;
             const arCanvas = document.getElementById("ar-overlay-canvas");
             const arCtx = arCanvas.getContext("2d");
-            
-            let initialZLength = null; 
-            let baselineTCPX = 1.0;    
             let anchorTCPPos = new THREE.Vector3();
-            
-            let lastStableRoll = 0.0;
-            let lastStableA5 = 0.0;
-            const SMOOTHING_FACTOR = 0.12;                  
-            const DEADBAND_RADIANS = 12 * (Math.PI / 180);  
 
             function onHandResults(results) {
                 arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
@@ -802,62 +777,60 @@ def build_embedded_viewport(payload):
                     
                     const wrist = handLandmarks[0];
                     const palmCenter = handLandmarks[9];
-                    const indexBase = handLandmarks[5];
-                    const pinkyBase = handLandmarks[17];
                     
+                    // --- 1. ROBOT TCP CONTROL INTERPOLATION ---
                     let targetY = -(palmCenter.x - 0.5) * 2.5; 
                     let targetZ = (1.0 - palmCenter.y) * 2.0; 
-
-                    const currentZDistance = Math.sqrt(Math.pow(palmCenter.x - wrist.x, 2) + Math.pow(palmCenter.y - wrist.y, 2));
-                    if (initialZLength === null) {
-                        initialZLength = currentZDistance;
-                        baselineTCPX = tcpAnchorPivot.position.x;
-                    }
-
-                    let targetX = baselineTCPX + (currentZDistance - initialZLength) * 4.0;
-                    targetX = Math.max(0.3, Math.min(2.5, targetX)); 
-
-                    let rawRollAngle = Math.atan2(pinkyBase.y - indexBase.y, pinkyBase.x - indexBase.x);
-                    
-                    let processedRoll = rawRollAngle;
-                    if (Math.abs(rawRollAngle) < DEADBAND_RADIANS) {
-                        processedRoll = 0.0; 
-                    }
-
-                    lastStableRoll = (processedRoll * SMOOTHING_FACTOR) + (lastStableRoll * (1 - SMOOTHING_FACTOR));
-                    localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], lastStableRoll));
+                    let targetX = 0.5 + (1.0 - palmCenter.z) * 1.5; 
 
                     anchorTCPPos.set(targetX, targetY, targetZ);
-                    tcpAnchorPivot.position.lerp(anchorTCPPos, SMOOTHING_FACTOR); 
+                    tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15);
                     executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
+                    // --- 2. 2D/3D AR OVERLAY HUD GENERATOR ---
                     const screenX = palmCenter.x * arCanvas.width;
                     const screenY = palmCenter.y * arCanvas.height;
+                    const baseScreenX = wrist.x * arCanvas.width;
+                    const baseScreenY = wrist.y * arCanvas.height;
+
+                    const dirX = screenX - baseScreenX;
+                    const dirY = screenY - baseScreenY;
+                    const distance = Math.sqrt(dirX * dirX + dirY * dirY);
+                    
+                    const uX = dirX / (distance || 1);
+                    const uY = dirY / (distance || 1);
+                    
+                    const nX = -uY;
+                    const nY = uX;
+
+                    const arrowLength = Math.max(30, distance * 0.7);
 
                     arCtx.lineWidth = 4;
                     arCtx.lineCap = "round";
 
-                    arCtx.strokeStyle = "#4caf50";
-                    arCtx.beginPath();
-                    arCtx.moveTo(screenX, screenY);
-                    arCtx.lineTo(screenX + 45, screenY);
-                    arCtx.stroke();
-
+                    // Z-Axis Alignment Arrow (Blue)
                     arCtx.strokeStyle = "#2196f3";
                     arCtx.beginPath();
                     arCtx.moveTo(screenX, screenY);
-                    arCtx.lineTo(screenX, screenY - 45);
+                    arCtx.lineTo(screenX + uX * arrowLength, screenY + uY * arrowLength);
                     arCtx.stroke();
 
+                    // X-Axis Lateral Arrow (Red)
+                    arCtx.strokeStyle = "#f44336";
+                    arCtx.beginPath();
+                    arCtx.moveTo(screenX, screenY);
+                    arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7));
+                    arCtx.stroke();
+
+                    // Center Targeting Reticle (Cyan Glow)
                     arCtx.fillStyle = "#00ffcc";
                     arCtx.shadowColor = "#00ffcc";
                     arCtx.shadowBlur = 10;
                     arCtx.beginPath();
                     arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI);
                     arCtx.fill();
-                    arCtx.shadowBlur = 0; 
-                } else {
-                    initialZLength = null; 
+                    
+                    arCtx.shadowBlur = 0;
                 }
             }
 
@@ -887,7 +860,7 @@ def build_embedded_viewport(payload):
                     });
                 }
                 mpCamera.start().catch(err => {
-                    alert("Webcam device initialization fault: " + err);
+                    alert("Camera access denied or unavailable: " + err);
                 });
             }
 
