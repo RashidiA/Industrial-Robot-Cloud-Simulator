@@ -19,8 +19,7 @@ if 'j_angles' not in st.session_state:
 if 'program' not in st.session_state:
     st.session_state.program = []
 
-# --- 2. MULTI-ROBOT KINEMATICS REGISTRY WITH MODIFIED JOINT 3 LIMITS (RADIANS) ---
-# NOTE: Joint 3 (Index 2 in limits array) across all profiles is now dynamically set to [-1.3962, 1.3962] (~ -80° to +80°)
+# --- 2. MULTI-ROBOT KINEMATICS REGISTRY ---
 ROBOT_REGISTRY = {
     "ABB_6700": {
         "links": [
@@ -55,7 +54,7 @@ ROBOT_REGISTRY = {
         "limits": [
             [-np.pi, np.pi], 
             [-1.221, 1.658], 
-            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-1.3962, 1.3962], 
             [-5.235, 5.235], 
             [-2.094, 2.094], 
             [-6.981, 6.981], 
@@ -75,7 +74,7 @@ ROBOT_REGISTRY = {
         "limits": [
             [-np.pi, np.pi], 
             [-1.134, 1.483], 
-            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-1.3962, 1.3962], 
             [-5.235, 5.235], 
             [-2.094, 2.094], 
             [-5.235, 5.235], 
@@ -95,7 +94,7 @@ ROBOT_REGISTRY = {
         "limits": [
             [-3.228, 3.228], 
             [-0.785, 1.483], 
-            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-1.3962, 1.3962], 
             [-6.108, 6.108], 
             [-2.181, 2.181], 
             [-6.108, 6.108], 
@@ -115,7 +114,7 @@ ROBOT_REGISTRY = {
         "limits": [
             [-3.141, 3.141], 
             [-1.570, 1.308], 
-            [-1.3962, 1.3962],             # A3: ADJUSTED TO -80° TO +80° ONLY
+            [-1.3962, 1.3962], 
             [-3.141, 3.141], 
             [-2.268, 2.268], 
             [-6.283, 6.283], 
@@ -288,6 +287,10 @@ def build_embedded_viewport(payload):
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
+        
+        <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
         <style>
             body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; }
             #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
@@ -313,15 +316,21 @@ def build_embedded_viewport(payload):
             
             #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
             .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: bold; }
+            
+            /* Hidden/Floating Video feedback window */
+            #webcam-feedback { position: absolute; bottom: 10px; left: 10px; width: 160px; height: 120px; border: 2px solid #ff9800; border-radius: 4px; z-index: 10; display: none; transform: scaleX(-1); }
         </style>
     </head>
     <body>
         <div id="status">WebGL Processing...</div>
+        <video id="webcam-feedback" autoplay playsinline></video>
+
         <div id="jog-pendant">
             <div class="pendant-title">⚡ INSTANT JOG PENDANT</div>
             <div class="mode-container">
-                <button id="mode-joint" class="mode-btn active">Joint Jog</button>
-                <button id="mode-tcp" class="mode-btn">⌖ TCP Jog</button>
+                <button id="mode-joint" class="mode-btn active">Joint</button>
+                <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
+                <button id="mode-gesture" class="mode-btn">✋ Gesture</button>
             </div>
             <div id="tcp-monitor">
                 <div style="color: #00ffcc; font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
@@ -409,7 +418,7 @@ def build_embedded_viewport(payload):
             });
 
             transformGizmo.addEventListener('objectChange', function () {
-                if (activeJogMode !== "tcp" || runSimulation) return;
+                if ((activeJogMode !== "tcp" && activeJogMode !== "gesture") || runSimulation) return;
                 executeCyclicInverseKinematics(tcpAnchorPivot.position);
             });
 
@@ -484,8 +493,8 @@ def build_embedded_viewport(payload):
                 currentMatrix.multiply(m2);
                 computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                let m3 = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
-                currentMatrix.multiply(m3);
+                let m2_adj = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+                currentMatrix.multiply(m2_adj);
                 computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
                 let m4 = getLinkStructureBaseMatrix(dh[3]).multiply(new THREE.Matrix4().makeRotationX(angles[4]));
@@ -581,19 +590,33 @@ def build_embedded_viewport(payload):
 
             const btnJoint = document.getElementById("mode-joint");
             const btnTCP = document.getElementById("mode-tcp");
+            const btnGesture = document.getElementById("mode-gesture");
             const rowsWrap = document.getElementById("joint-jog-container");
             const hudMonitor = document.getElementById("tcp-monitor");
+            const videoElement = document.getElementById("webcam-feedback");
 
             btnJoint.addEventListener("click", () => {
-                activeJogMode = "joint"; btnJoint.classList.add("active"); btnTCP.classList.remove("active");
-                rowsWrap.style.display = "block"; hudMonitor.style.display = "none";
+                activeJogMode = "joint"; 
+                btnJoint.classList.add("active"); btnTCP.classList.remove("active"); btnGesture.classList.remove("active");
+                rowsWrap.style.display = "block"; hudMonitor.style.display = "none"; videoElement.style.display = "none";
                 transformGizmo.visible = false; transformGizmo.enabled = false;
+                stopWebcam();
             });
 
             btnTCP.addEventListener("click", () => {
-                activeJogMode = "tcp"; btnTCP.classList.add("active"); btnJoint.classList.remove("active");
-                rowsWrap.style.display = "none"; hudMonitor.style.display = "block";
+                activeJogMode = "tcp"; 
+                btnTCP.classList.add("active"); btnJoint.classList.remove("active"); btnGesture.classList.remove("active");
+                rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; videoElement.style.display = "none";
                 transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
+                stopWebcam();
+            });
+
+            btnGesture.addEventListener("click", () => {
+                activeJogMode = "gesture";
+                btnGesture.classList.add("active"); btnJoint.classList.remove("active"); btnTCP.classList.remove("active");
+                rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; videoElement.style.display = "block";
+                transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
+                startWebcam();
             });
 
             const rowsContainer = document.getElementById('joint-jog-container');
@@ -679,7 +702,11 @@ def build_embedded_viewport(payload):
                     updateSceneTransforms(blendedTransforms, data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ, data.toolRotX, data.toolRotY, data.toolRotZ, data.jigX, data.jigY, data.jigZ, ((1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7]));
                 } else {
                     document.getElementById('jog-pendant').style.opacity = "1.0";
-                    document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
+                    if(activeJogMode === "gesture") {
+                        document.getElementById('status').innerText = "Status: Gesture Control Active (Move Hand)";
+                    } else {
+                        document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
+                    }
                 }
                 renderer.render(scene, camera);
             }
@@ -704,6 +731,71 @@ def build_embedded_viewport(payload):
                 camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix();
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
+
+            // --- GESTURE PROCESSING ENGINE (MEDIAPIPE) ---
+            let mpHands = null;
+            let mpCamera = null;
+            let anchorTCPPos = new THREE.Vector3();
+
+            function onHandResults(results) {
+                if (activeJogMode !== "gesture" || runSimulation) return;
+                
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    // Landmark 9 is the middle finger MCP joint (represents central palm)
+                    const palm = results.multiHandLandmarks[0][9];
+                    
+                    // Map 0 -> 1 normalized tracking space to absolute 3D Cartesian bounds
+                    // X-axis mapping (Left-Right hand movement corresponds to Y workspace)
+                    let targetY = -(palm.x - 0.5) * 2.5; 
+                    // Y-axis mapping (Up-Down hand movement corresponds to Z workspace)
+                    let targetZ = (1.0 - palm.y) * 2.0; 
+                    // Z-axis mapping (Palm Depth / Proximity corresponds to X workspace)
+                    let targetX = 0.5 + (1.0 - palm.z) * 1.5; 
+
+                    anchorTCPPos.set(targetX, targetY, targetZ);
+                    
+                    // Smooth tracking filter
+                    tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15);
+                    executeCyclicInverseKinematics(tcpAnchorPivot.position);
+                }
+            }
+
+            function startWebcam() {
+                if (!mpHands) {
+                    mpHands = new Hands({
+                        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                    });
+                    mpHands.setOptions({
+                        maxNumHands: 1,
+                        modelComplexity: 1,
+                        minDetectionConfidence: 0.6,
+                        minTrackingConfidence: 0.6
+                    });
+                    mpHands.onResults(onHandResults);
+                }
+
+                if (!mpCamera) {
+                    mpCamera = new Camera(videoElement, {
+                        onFrame: async () => {
+                            if (activeJogMode === "gesture") {
+                                await mpHands.send({ image: videoElement });
+                            }
+                        },
+                        width: 320,
+                        height: 240
+                    });
+                }
+                mpCamera.start().catch(err => {
+                    alert("Camera access denied or unavailable: " + err);
+                });
+            }
+
+            function stopWebcam() {
+                if (mpCamera) {
+                    mpCamera.stop();
+                    mpCamera = null;
+                }
+            }
 
             refreshSceneDisplay(true); updateUIElements(); animate();
         </script>
