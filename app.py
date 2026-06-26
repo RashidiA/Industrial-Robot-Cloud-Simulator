@@ -613,6 +613,8 @@ def build_embedded_viewport(payload):
                         let angleScalarDot = componentToEE.dot(componentToTarget);
                         let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.12;
                         
+                        // --- JOINT SENSITIVITY DAMPENING PRESETS ---
+                        if (j === 4) localizedDeltaTheta *= 0.15; // Heavily dampened to prevent massive Joint 4 axis flipping spins
                         if (j === 5) localizedDeltaTheta *= 0.25; 
                         if (j === 6) localizedDeltaTheta *= 0.35;
 
@@ -891,7 +893,6 @@ def build_embedded_viewport(payload):
                     const screenY = palmCenter.y * arCanvas.height;
 
                     if (isHandEngaged) {
-                        // --- UPDATED WORKSPACE COEFFICIENTS TO PREVENT LOCKOUTS ---
                         let targetZ = 0.3 + (1.0 - palmCenter.y) * 1.0; 
                         let targetY = -(palmCenter.x - 0.5) * 1.6; 
                         let targetX = 0.8 + (1.0 - palmCenter.z) * 0.9; 
