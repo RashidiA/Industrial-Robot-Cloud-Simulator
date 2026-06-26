@@ -613,8 +613,14 @@ def build_embedded_viewport(payload):
                         let angleScalarDot = componentToEE.dot(componentToTarget);
                         let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.12;
                         
-                        // --- JOINT SENSITIVITY DAMPENING PRESETS ---
-                        if (j === 4) localizedDeltaTheta *= 0.15; // Heavily dampened to prevent massive Joint 4 axis flipping spins
+                        // --- JOINT SENSITIVITY DAMPENING PRESETS & SINGULARITY BRAKES ---
+                        if (j === 4) {
+                            localizedDeltaTheta *= 0.15;
+                            // Singularity Brake: If Axis 5 is near dead straight (0), kill Axis 4 adjustments to stop drift spirals
+                            if (Math.abs(localJointAngles[5]) < 0.10) {
+                                localizedDeltaTheta *= 0.05;
+                            }
+                        }
                         if (j === 5) localizedDeltaTheta *= 0.25; 
                         if (j === 6) localizedDeltaTheta *= 0.35;
 
@@ -769,6 +775,7 @@ def build_embedded_viewport(payload):
 
             let simStepIndex = 0; let interpolationFraction = 0; let runSimulation = false;
 
+            // --- MAIN RENDERING ANIMATION ENGINE ---
             function animate() {
                 requestAnimationFrame(animate);
                 controls.update();
@@ -898,7 +905,15 @@ def build_embedded_viewport(payload):
                         let targetX = 0.8 + (1.0 - palmCenter.z) * 0.9; 
 
                         anchorTCPPos.set(targetX, targetY, targetZ);
-                        tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15);
+                        
+                        // --- 1. WEBCAM JITTER DEADZONE FILTER ---
+                        if (!window.lastRawHandPos) { window.lastRawHandPos = new THREE.Vector3().copy(anchorTCPPos); }
+                        // If the hand moves less than 1.5 cm, completely skip position mutations (locks solver solid when holding still)
+                        if (anchorTCPPos.distanceTo(window.lastRawHandPos) > 0.015) { 
+                            window.lastRawHandPos.copy(anchorTCPPos);
+                        }
+
+                        tcpAnchorPivot.position.lerp(window.lastRawHandPos, 0.15);
                         executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
                         const p5 = handLandmarks[5];   
