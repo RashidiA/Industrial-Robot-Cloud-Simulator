@@ -370,10 +370,6 @@ def build_embedded_viewport(payload):
                 z-index: 20;
                 transform: scaleX(-1);
             }
-            .ar-gesture-remarks-hud span {
-                color: #ff9800;
-                font-weight: bold;
-            }
         </style>
     </head>
     <body>
@@ -828,7 +824,7 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // --- 8. HYBRID GESTURE PROCESSING ENGINE WITH ACTIVATION DEADZONE BOX ---
+            // --- 8. HYBRID GESTURE PROCESSING ENGINE WITH SCALED COORD WORKSPACE ---
             let mpHands = null;
             let mpCamera = null;
             const arCanvas = document.getElementById("ar-overlay-canvas");
@@ -837,9 +833,8 @@ def build_embedded_viewport(payload):
             let anchorTCPPos = new THREE.Vector3();
             let isPinchActive = false; 
             let lastPinchTime = 0;
-            let isHandEngaged = false; // Tracking activation flag
+            let isHandEngaged = false; 
 
-            // Defining center activation box limits (normalized 0 to 1 coordinates)
             const boxMinX = 0.33;
             const boxMaxX = 0.67;
             const boxMinY = 0.30;
@@ -849,13 +844,12 @@ def build_embedded_viewport(payload):
                 arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
                 if (activeJogMode !== "gesture" || runSimulation) return;
 
-                // Always draw the static validation bounding box overlay
                 arCtx.lineWidth = 2;
                 if (isHandEngaged) {
-                    arCtx.strokeStyle = "#4caf50"; // Green when engaged
+                    arCtx.strokeStyle = "#4caf50"; 
                     arCtx.fillStyle = "rgba(76, 175, 80, 0.05)";
                 } else {
-                    arCtx.strokeStyle = "#ff9800"; // Orange when waiting
+                    arCtx.strokeStyle = "#ff9800"; 
                     arCtx.fillStyle = "rgba(255, 152, 0, 0.03)";
                 }
                 
@@ -871,39 +865,36 @@ def build_embedded_viewport(payload):
                     const palmCenter = handLandmarks[9];
                     const wrist = handLandmarks[0];
                     
-                    // Check if palm center is located inside the center engagement box
                     const insideBox = (palmCenter.x >= boxMinX && palmCenter.x <= boxMaxX && palmCenter.y >= boxMinY && palmCenter.y <= boxMaxY);
 
                     if (!isHandEngaged) {
                         if (insideBox) {
-                            isHandEngaged = true; // Engage tracking only once hand reaches center box
+                            isHandEngaged = true; 
                             document.getElementById("ar-hud-text").innerHTML = "🟢 TRACKING ACTIVE: MOVE PALM";
                             document.getElementById("ar-hud-text").style.color = "#4caf50";
                         } else {
                             document.getElementById("ar-hud-text").innerHTML = "⚠️ PLACE PALM INSIDE THE CENTER BOX";
                             document.getElementById("ar-hud-text").style.color = "#ff9800";
                             
-                            // Keep robot target snapped back safely onto current mechanical flange to avoid runaway moves
                             if (links[6]) {
                                 tcpAnchorPivot.position.copy(links[6].position);
                                 tcpAnchorPivot.quaternion.copy(links[6].quaternion);
                             }
                         }
                     } else {
-                        // Hand was already active, verify it didn't cross outside boundaries completely
                         if (palmCenter.x < 0.05 || palmCenter.x > 0.95 || palmCenter.y < 0.05 || palmCenter.y > 0.95) {
-                            isHandEngaged = false; // Disengage tracking instantly
+                            isHandEngaged = false; 
                         }
                     }
 
-                    // Render custom UI cues for hand positions
                     const screenX = palmCenter.x * arCanvas.width;
                     const screenY = palmCenter.y * arCanvas.height;
 
                     if (isHandEngaged) {
-                        let targetY = -(palmCenter.x - 0.5) * 2.5; 
-                        let targetZ = (1.0 - palmCenter.y) * 2.0; 
-                        let targetX = 0.5 + (1.0 - palmCenter.z) * 1.5; 
+                        // --- UPDATED WORKSPACE COEFFICIENTS TO PREVENT LOCKOUTS ---
+                        let targetZ = 0.3 + (1.0 - palmCenter.y) * 1.0; 
+                        let targetY = -(palmCenter.x - 0.5) * 1.6; 
+                        let targetX = 0.8 + (1.0 - palmCenter.z) * 0.9; 
 
                         anchorTCPPos.set(targetX, targetY, targetZ);
                         tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15);
@@ -972,7 +963,6 @@ def build_embedded_viewport(payload):
                     arCtx.beginPath(); arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI); arCtx.fill();
                     arCtx.shadowBlur = 0;
                 } else {
-                    // No hands found in frame at all: Drop engagement lock
                     if (isHandEngaged) {
                         isHandEngaged = false;
                         document.getElementById("ar-hud-text").innerHTML = "PLACE HAND INSIDE BOX TO ENGAGE";
@@ -1010,7 +1000,7 @@ def build_embedded_viewport(payload):
     
     components.html(html_source, height=750, scrolling=False)
 
-# --- 8. DYNAMIC HARDWARE FILE BINDING LAYER ---
+# --- 9. DYNAMIC HARDWARE FILE BINDING LAYER ---
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
 link_b64s = []
