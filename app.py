@@ -32,13 +32,13 @@ ROBOT_REGISTRY = {
         ],
         "fallback_heights": [0.78, 0.5, 1.28, 0.4, 0.2, 0.2, 0.1],
         "limits": [
-            [-np.pi, np.pi],               # A1: ±180°
-            [-1.047, 1.483],               # A2: -60° to +85°
-            [-1.3962, 1.3962],             # A3: -80° to +80° ONLY
-            [-6.108, 6.108],               # A4: ±350°
-            [-2.181, 2.181],               # A5: ±125°
-            [-6.108, 6.108],               # A6: ±350°
-            [-np.pi, np.pi]                # E1: ±180°
+            [-np.pi, np.pi],               
+            [-1.047, 1.483],               
+            [-1.3962, 1.3962],             
+            [-6.108, 6.108],               
+            [-2.181, 2.181],               
+            [-6.108, 6.108],               
+            [-np.pi, np.pi]                
         ]
     },
     "ABB_4400": {
@@ -143,7 +143,7 @@ with st.sidebar:
 
 active_cfg = ROBOT_REGISTRY.get(selected_profile, ROBOT_REGISTRY["ABB_6700"])
 
-# --- 4. CONFIGURATION ADJUSTED KINEMATICS ENGINE ---
+# --- 4. KINEMATICS BUILDER ---
 @st.cache_resource
 def build_robot_chain(profile_name, hardware_config):
     links_data = hardware_config["links"]
@@ -380,8 +380,8 @@ def build_embedded_viewport(payload):
         <div id="status">WebGL Processing...</div>
         
         <div class="ar-viewport-container" id="ar-viewport">
-            <div class="ar-gesture-remarks-hud">
-                💡 PINCH <span>THUMB & INDEX</span> TO RECORD STEP POSITION
+            <div class="ar-gesture-remarks-hud" id="ar-hud-text">
+                PLACE HAND INSIDE BOX TO ENGAGE
             </div>
             <video id="webcam-feedback" autoplay playsinline></video>
             <canvas id="ar-overlay-canvas" width="320" height="240"></canvas>
@@ -587,12 +587,10 @@ def build_embedded_viewport(payload):
             }
 
             function executeCyclicInverseKinematics(targetGlobalPos) {
-                // Determine maximum safe physical reach boundary for the current robot profile config
                 let maxReachRadius = 2.95; 
                 if (data.profileName === "ABB_4400") maxReachRadius = 1.95;
                 if (data.profileName === "Yaskawa_3500") maxReachRadius = 2.45;
 
-                // Clamping the targeted position within safe spherical reach boundary to stop runaway unconstrained loops
                 let distanceFromBase = targetGlobalPos.length();
                 if (distanceFromBase > maxReachRadius) {
                     targetGlobalPos.normalize().multiplyScalar(maxReachRadius);
@@ -630,7 +628,7 @@ def build_embedded_viewport(payload):
                         }
                     }
                 }
-                refreshSceneDisplay(false); // Update meshes but bypass gizmo snap during IK drag loop
+                refreshSceneDisplay(false); 
                 updateMonitorHUDText(targetGlobalPos);
             }
 
@@ -647,7 +645,6 @@ def build_embedded_viewport(payload):
                     gunMesh.translateX(data.toolOffsetX); gunMesh.translateY(data.toolOffsetY); gunMesh.translateZ(data.toolOffsetZ);
                     toolAdjustmentGroup.rotation.set(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ');
 
-                    // FIX: Snap the interactive 3-axis gizmo directly onto Axis 6 face during manual joint jogs
                     if (updateGizmoPosition || runSimulation) {
                         tcpAnchorPivot.position.copy(links[6].position);
                         tcpAnchorPivot.quaternion.copy(links[6].quaternion);
@@ -696,7 +693,7 @@ def build_embedded_viewport(payload):
                 rowsWrap.style.display = "block"; hudMonitor.style.display = "none"; arContainer.style.display = "none";
                 transformGizmo.visible = false; transformGizmo.enabled = false;
                 stopWebcam();
-                refreshSceneDisplay(true); // Re-align axis controls instantly on return
+                refreshSceneDisplay(true); 
             });
 
             btnTCP.addEventListener("click", () => {
@@ -704,7 +701,7 @@ def build_embedded_viewport(payload):
                 btnTCP.classList.add("active"); btnJoint.classList.remove("active"); btnGesture.classList.remove("active");
                 rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "none";
                 transformGizmo.visible = true; transformGizmo.enabled = true; 
-                refreshSceneDisplay(true); // Lock tracking straight to A6 flange 
+                refreshSceneDisplay(true); 
                 stopWebcam();
             });
 
@@ -741,7 +738,7 @@ def build_embedded_viewport(payload):
                 let nextAngle = localJointAngles[jointIdx] + (direction * J_STEP);
                 if (nextAngle >= limitsConfig[jointIdx-1][0] && nextAngle <= limitsConfig[jointIdx-1][1]) {
                     localJointAngles[jointIdx] = nextAngle;
-                    refreshSceneDisplay(true); // Keeps gizmo rigidly attached to 6th flange
+                    refreshSceneDisplay(true); 
                 }
             }
 
@@ -819,7 +816,6 @@ def build_embedded_viewport(payload):
                     gunMesh.translateX(ox); gunMesh.translateY(oy); gunMesh.translateZ(oz);
                     toolAdjustmentGroup.rotation.set(rx, ry, rz, 'XYZ');
                     
-                    // FIX: Ensure the interactive anchor matrix maintains a continuous 1:1 match with 6th axis position inside the render cycle
                     tcpAnchorPivot.position.copy(links[6].position);
                     tcpAnchorPivot.quaternion.copy(links[6].quaternion);
                     transformGizmo.updateMatrixWorld();
@@ -832,7 +828,7 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // --- 8. HYBRID GESTURE PROCESSING ENGINE ---
+            // --- 8. HYBRID GESTURE PROCESSING ENGINE WITH ACTIVATION DEADZONE BOX ---
             let mpHands = null;
             let mpCamera = null;
             const arCanvas = document.getElementById("ar-overlay-canvas");
@@ -841,93 +837,152 @@ def build_embedded_viewport(payload):
             let anchorTCPPos = new THREE.Vector3();
             let isPinchActive = false; 
             let lastPinchTime = 0;
+            let isHandEngaged = false; // Tracking activation flag
+
+            // Defining center activation box limits (normalized 0 to 1 coordinates)
+            const boxMinX = 0.33;
+            const boxMaxX = 0.67;
+            const boxMinY = 0.30;
+            const boxMaxY = 0.70;
 
             function onHandResults(results) {
                 arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
                 if (activeJogMode !== "gesture" || runSimulation) return;
+
+                // Always draw the static validation bounding box overlay
+                arCtx.lineWidth = 2;
+                if (isHandEngaged) {
+                    arCtx.strokeStyle = "#4caf50"; // Green when engaged
+                    arCtx.fillStyle = "rgba(76, 175, 80, 0.05)";
+                } else {
+                    arCtx.strokeStyle = "#ff9800"; // Orange when waiting
+                    arCtx.fillStyle = "rgba(255, 152, 0, 0.03)";
+                }
+                
+                const bx = boxMinX * arCanvas.width;
+                const by = boxMinY * arCanvas.height;
+                const bw = (boxMaxX - boxMinX) * arCanvas.width;
+                const bh = (boxMaxY - boxMinY) * arCanvas.height;
+                arCtx.fillRect(bx, by, bw, bh);
+                arCtx.strokeRect(bx, by, bw, bh);
                 
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const handLandmarks = results.multiHandLandmarks[0];
                     const palmCenter = handLandmarks[9];
                     const wrist = handLandmarks[0];
                     
-                    let targetY = -(palmCenter.x - 0.5) * 2.5; 
-                    let targetZ = (1.0 - palmCenter.y) * 2.0; 
-                    let targetX = 0.5 + (1.0 - palmCenter.z) * 1.5; 
+                    // Check if palm center is located inside the center engagement box
+                    const insideBox = (palmCenter.x >= boxMinX && palmCenter.x <= boxMaxX && palmCenter.y >= boxMinY && palmCenter.y <= boxMaxY);
 
-                    anchorTCPPos.set(targetX, targetY, targetZ);
-                    tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15);
-                    executeCyclicInverseKinematics(tcpAnchorPivot.position);
-
-                    const p5 = handLandmarks[5];   
-                    const p17 = handLandmarks[17]; 
-                    let currentRoll = Math.atan2(p17.y - p5.y, p17.x - p5.x);
-                    
-                    if (window.lastHandRoll === undefined) { window.lastHandRoll = currentRoll; }
-                    let deltaRoll = currentRoll - window.lastHandRoll;
-                    if (deltaRoll > Math.PI) deltaRoll -= 2 * Math.PI;
-                    if (deltaRoll < -Math.PI) deltaRoll += 2 * Math.PI;
-                    window.lastHandRoll = currentRoll;
-
-                    if (Math.abs(deltaRoll) > 0.005) {
-                        localJointAngles[6] += deltaRoll * 0.45; 
-                        localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], localJointAngles[6]));
-                    }
-
-                    const thumbTip = handLandmarks[4];
-                    const indexTip = handLandmarks[8];
-                    let dx = thumbTip.x - indexTip.x;
-                    let dy = thumbTip.y - indexTip.y;
-                    let dz = thumbTip.z - indexTip.z;
-                    let pinchDistance = Math.sqrt(dx*dx + dy*dy + dz*dz);
-
-                    if (pinchDistance < 0.045) {
-                        if (!isPinchActive) {
-                            let currentTime = Date.now();
-                            if (currentTime - lastPinchTime > 1200) { 
-                                isPinchActive = true;
-                                lastPinchTime = currentTime;
-                                triggerManualStepRecord();
-                                document.getElementById('status').style.background = "rgba(76, 175, 80, 0.95)";
-                                setTimeout(() => { document.getElementById('status').style.background = "rgba(20,20,20,0.8)"; }, 400);
+                    if (!isHandEngaged) {
+                        if (insideBox) {
+                            isHandEngaged = true; // Engage tracking only once hand reaches center box
+                            document.getElementById("ar-hud-text").innerHTML = "🟢 TRACKING ACTIVE: MOVE PALM";
+                            document.getElementById("ar-hud-text").style.color = "#4caf50";
+                        } else {
+                            document.getElementById("ar-hud-text").innerHTML = "⚠️ PLACE PALM INSIDE THE CENTER BOX";
+                            document.getElementById("ar-hud-text").style.color = "#ff9800";
+                            
+                            // Keep robot target snapped back safely onto current mechanical flange to avoid runaway moves
+                            if (links[6]) {
+                                tcpAnchorPivot.position.copy(links[6].position);
+                                tcpAnchorPivot.quaternion.copy(links[6].quaternion);
                             }
                         }
                     } else {
-                        isPinchActive = false;
+                        // Hand was already active, verify it didn't cross outside boundaries completely
+                        if (palmCenter.x < 0.05 || palmCenter.x > 0.95 || palmCenter.y < 0.05 || palmCenter.y > 0.95) {
+                            isHandEngaged = false; // Disengage tracking instantly
+                        }
                     }
 
+                    // Render custom UI cues for hand positions
                     const screenX = palmCenter.x * arCanvas.width;
                     const screenY = palmCenter.y * arCanvas.height;
-                    const baseScreenX = wrist.x * arCanvas.width;
-                    const baseScreenY = wrist.y * arCanvas.height;
 
-                    const dirX = screenX - baseScreenX;
-                    const dirY = screenY - baseScreenY;
-                    const distance = Math.sqrt(dirX * dirX + dirY * dirY);
-                    
-                    const uX = dirX / (distance || 1);
-                    const uY = dirY / (distance || 1);
-                    const nX = -uY;
-                    const nY = uX;
-                    const arrowLength = Math.max(30, distance * 0.7);
+                    if (isHandEngaged) {
+                        let targetY = -(palmCenter.x - 0.5) * 2.5; 
+                        let targetZ = (1.0 - palmCenter.y) * 2.0; 
+                        let targetX = 0.5 + (1.0 - palmCenter.z) * 1.5; 
 
-                    arCtx.lineWidth = 4;
-                    arCtx.lineCap = "round";
-                    arCtx.strokeStyle = "#2196f3";
-                    arCtx.beginPath(); arCtx.moveTo(screenX, screenY); arCtx.lineTo(screenX + uX * arrowLength, screenY + uY * arrowLength); arCtx.stroke();
+                        anchorTCPPos.set(targetX, targetY, targetZ);
+                        tcpAnchorPivot.position.lerp(anchorTCPPos, 0.15);
+                        executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
-                    arCtx.strokeStyle = "#f44336";
-                    arCtx.beginPath(); arCtx.moveTo(screenX, screenY); arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7)); arCtx.stroke();
+                        const p5 = handLandmarks[5];   
+                        const p17 = handLandmarks[17]; 
+                        let currentRoll = Math.atan2(p17.y - p5.y, p17.x - p5.x);
+                        
+                        if (window.lastHandRoll === undefined) { window.lastHandRoll = currentRoll; }
+                        let deltaRoll = currentRoll - window.lastHandRoll;
+                        if (deltaRoll > Math.PI) deltaRoll -= 2 * Math.PI;
+                        if (deltaRoll < -Math.PI) deltaRoll += 2 * Math.PI;
+                        window.lastHandRoll = currentRoll;
 
-                    arCtx.fillStyle = isPinchActive ? "#4caf50" : "#00ffcc";
-                    arCtx.shadowColor = isPinchActive ? "#4caf50" : "#00ffcc";
-                    arCtx.shadowBlur = isPinchActive ? 18 : 10;
-                    arCtx.beginPath(); arCtx.arc(screenX, screenY, isPinchActive ? 8 : 6, 0, 2 * Math.PI); arCtx.fill();
+                        if (Math.abs(deltaRoll) > 0.005) {
+                            localJointAngles[6] += deltaRoll * 0.45; 
+                            localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], localJointAngles[6]));
+                        }
+
+                        const thumbTip = handLandmarks[4];
+                        const indexTip = handLandmarks[8];
+                        let dx = thumbTip.x - indexTip.x;
+                        let dy = thumbTip.y - indexTip.y;
+                        let dz = thumbTip.z - indexTip.z;
+                        let pinchDistance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+                        if (pinchDistance < 0.045) {
+                            if (!isPinchActive) {
+                                let currentTime = Date.now();
+                                if (currentTime - lastPinchTime > 1200) { 
+                                    isPinchActive = true;
+                                    lastPinchTime = currentTime;
+                                    triggerManualStepRecord();
+                                    document.getElementById('status').style.background = "rgba(76, 175, 80, 0.95)";
+                                    setTimeout(() => { document.getElementById('status').style.background = "rgba(20,20,20,0.8)"; }, 400);
+                                }
+                            }
+                        } else {
+                            isPinchActive = false;
+                        }
+
+                        const baseScreenX = wrist.x * arCanvas.width;
+                        const baseScreenY = wrist.y * arCanvas.height;
+                        const dirX = screenX - baseScreenX;
+                        const dirY = screenY - baseScreenY;
+                        const distance = Math.sqrt(dirX * dirX + dirY * dirY);
+                        const uX = dirX / (distance || 1);
+                        const uY = dirY / (distance || 1);
+                        const nX = -uY;
+                        const nY = uX;
+                        const arrowLength = Math.max(30, distance * 0.7);
+
+                        arCtx.lineWidth = 4;
+                        arCtx.lineCap = "round";
+                        arCtx.strokeStyle = "#2196f3";
+                        arCtx.beginPath(); arCtx.moveTo(screenX, screenY); arCtx.lineTo(screenX + uX * arrowLength, screenY + uY * arrowLength); arCtx.stroke();
+
+                        arCtx.strokeStyle = "#f44336";
+                        arCtx.beginPath(); arCtx.moveTo(screenX, screenY); arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7)); arCtx.stroke();
+                    }
+
+                    arCtx.fillStyle = isHandEngaged ? (isPinchActive ? "#4caf50" : "#00ffcc") : "#ff9800";
+                    arCtx.shadowColor = arCtx.fillStyle;
+                    arCtx.shadowBlur = 10;
+                    arCtx.beginPath(); arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI); arCtx.fill();
                     arCtx.shadowBlur = 0;
+                } else {
+                    // No hands found in frame at all: Drop engagement lock
+                    if (isHandEngaged) {
+                        isHandEngaged = false;
+                        document.getElementById("ar-hud-text").innerHTML = "PLACE HAND INSIDE BOX TO ENGAGE";
+                        document.getElementById("ar-hud-text").style.color = "#ff9800";
+                    }
                 }
             }
 
             function startWebcam() {
+                isHandEngaged = false;
                 if (!mpHands) {
                     mpHands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
                     mpHands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
@@ -942,7 +997,10 @@ def build_embedded_viewport(payload):
                 mpCamera.start().catch(err => { alert("Camera access denied or unavailable: " + err); });
             }
 
-            function stopWebcam() { if (mpCamera) { mpCamera.stop(); mpCamera = null; } }
+            function stopWebcam() { 
+                isHandEngaged = false;
+                if (mpCamera) { mpCamera.stop(); mpCamera = null; } 
+            }
 
             refreshSceneDisplay(true); updateUIElements(); animate();
         </script>
