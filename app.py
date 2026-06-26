@@ -279,326 +279,829 @@ if 'js_scale' not in locals(): js_scale = 0.001
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
-    # Using raw string literal r""" to prevent syntax/escaping issues across environments
-    html_source = r"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
-        
-        <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-        <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    # We escape any internal quote issues by ensuring this raw string remains cleanly defined
+    html_source = r"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-        <style>
-            body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; }
-            #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
-            #status { position: absolute; top: 10px; left: 10px; color: #ffffff; font-size: 13px; background: rgba(20,20,20,0.8); padding: 6px 12px; border-radius:4px; border: 1px solid #333; z-index: 10; }
-            #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 220px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-            .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
-            
-            .mode-container { display: flex; gap: 4px; margin-bottom: 8px; }
-            .mode-btn { flex: 1; background: #222; border: 1px solid #444; color: #aaa; padding: 5px; font-size: 10px; font-weight: bold; cursor: pointer; border-radius: 4px; text-transform: uppercase; }
-            .mode-btn.active { background: #ff9800; color: black; border-color: #ff9800; }
-            
-            .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-            .jog-label { font-size: 12px; font-weight: bold; font-family: monospace; color: #bbb; }
-            .jog-btn { background: #222; border: 1px solid #444; color: white; width: 45px; height: 26px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; transition: all 0.1s; }
-            .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
-            .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
-            .action-block { margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-            .btn-action { width: 100%; border: none; font-weight: bold; height: 32px; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: background 0.1s; }
-            #btn-save-step { background: #ff9800; color: black; }
-            #btn-run-sim { background: #4caf50; color: white; }
-            #btn-clear-seq { background: #f44336; color: white; }
-            #btn-reset-pos { background: #3f51b5; color: white; margin-bottom: 4px; border: 1px solid #5c6bc0; }
-            #btn-reset-pos:active { background: #283593; }
-            .step-counter { font-size: 12px; font-family: monospace; text-align: center; color: #aaa; margin-top: 2px; }
-            
-            #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
-            .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: bold; }
-            
-            .ar-viewport-container {
-                position: absolute;
-                bottom: 15px;
-                left: 15px;
-                width: 320px;
-                height: 240px;
-                border: 2px solid #ff9800;
-                border-radius: 6px;
-                box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-                z-index: 10;
-                display: none;
-                overflow: hidden;
-                transform: scaleX(-1);
-            }
-            #webcam-feedback {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-                position: absolute;
-                top: 0;
-                left: 0;
-                z-index: 11;
-            }
-            #ar-overlay-canvas {
-                width: 100%;
-                height: 100%;
-                position: absolute;
-                top: 0;
-                left: 0;
-                z-index: 12;
-                pointer-events: none;
-            }
-            
-            .ar-gesture-remarks-hud {
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                background: rgba(0, 0, 0, 0.8);
-                border-bottom: 1px solid #ff9800;
-                color: #ffffff;
-                font-size: 11px;
-                text-align: center;
-                padding: 5px 0;
-                font-family: 'Segoe UI', sans-serif;
-                font-weight: 500;
-                letter-spacing: 0.5px;
-                z-index: 20;
-                transform: scaleX(-1);
-            }
-        </style>
-    </head>
-    <body>
-        <div id="status">WebGL Processing...</div>
+    <style>
+        body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
+        #status { position: absolute; top: 10px; left: 10px; color: #ffffff; font-size: 13px; background: rgba(20,20,20,0.8); padding: 6px 12px; border-radius:4px; border: 1px solid #333; z-index: 10; }
+        #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 220px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
         
-        <div class="ar-viewport-container" id="ar-viewport">
-            <div class="ar-gesture-remarks-hud" id="ar-hud-text">
-                PLACE HAND INSIDE BOX TO ENGAGE
-            </div>
-            <video id="webcam-feedback" autoplay playsinline></video>
-            <canvas id="ar-overlay-canvas" width="320" height="240"></canvas>
+        .mode-container { display: flex; gap: 4px; margin-bottom: 8px; }
+        .mode-btn { flex: 1; background: #222; border: 1px solid #444; color: #aaa; padding: 5px; font-size: 10px; font-weight: bold; cursor: pointer; border-radius: 4px; text-transform: uppercase; }
+        .mode-btn.active { background: #ff9800; color: black; border-color: #ff9800; }
+        
+        .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+        .jog-label { font-size: 12px; font-weight: bold; font-family: monospace; color: #bbb; }
+        .jog-btn { background: #222; border: 1px solid #444; color: white; width: 45px; height: 26px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; transition: all 0.1s; }
+        .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
+        .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
+        .action-block { margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .btn-action { width: 100%; border: none; font-weight: bold; height: 32px; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: background 0.1s; }
+        #btn-save-step { background: #ff9800; color: black; }
+        #btn-run-sim { background: #4caf50; color: white; }
+        #btn-clear-seq { background: #f44336; color: white; }
+        #btn-reset-pos { background: #3f51b5; color: white; margin-bottom: 4px; border: 1px solid #5c6bc0; }
+        #btn-reset-pos:active { background: #283593; }
+        .step-counter { font-size: 12px; font-family: monospace; text-align: center; color: #aaa; margin-top: 2px; }
+        
+        #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
+        .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: bold; }
+        
+        .ar-viewport-container {
+            position: absolute;
+            bottom: 15px;
+            left: 15px;
+            width: 320px;
+            height: 240px;
+            border: 2px solid #ff9800;
+            border-radius: 6px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+            z-index: 10;
+            display: none;
+            overflow: hidden;
+            transform: scaleX(-1);
+        }
+        #webcam-feedback {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 11;
+        }
+        #ar-overlay-canvas {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 12;
+            pointer-events: none;
+        }
+        
+        .ar-gesture-remarks-hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            border-bottom: 1px solid #ff9800;
+            color: #ffffff;
+            font-size: 11px;
+            text-align: center;
+            padding: 5px 0;
+            font-family: 'Segoe UI', sans-serif;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            z-index: 20;
+            transform: scaleX(-1);
+        }
+    </style>
+</head>
+<body>
+    <div id="status">WebGL Processing...</div>
+    
+    <div class="ar-viewport-container" id="ar-viewport">
+        <div class="ar-gesture-remarks-hud" id="ar-hud-text">PLACE HAND INSIDE BOX TO ENGAGE</div>
+        <video id="webcam-feedback" autoplay playsinline></video>
+        <canvas id="ar-overlay-canvas" width="320" height="240"></canvas>
+    </div>
+
+    <div id="jog-pendant">
+        <div class="pendant-title">⚡ HYBRID ULTIMATE PENDANT</div>
+        <div class="mode-container">
+            <button id="mode-joint" class="mode-btn active">Joint</button>
+            <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
+            <button id="mode-gesture" class="mode-btn">✋ Gesture</button>
         </div>
-
-        <div id="jog-pendant">
-            <div class="pendant-title">⚡ HYBRID ULTIMATE PENDANT</div>
-            <div class="mode-container">
-                <button id="mode-joint" class="mode-btn active">Joint</button>
-                <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
-                <button id="mode-gesture" class="mode-btn">✋ Gesture</button>
-            </div>
-            <div id="tcp-monitor">
-                <div style="color: #00ffcc; font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
-                <div class="tcp-grid">
-                    <span style="color:#ff4444">X:<span id="lbl-tx">0.00</span></span>
-                    <span style="color:#44ff44">Y:<span id="lbl-ty">0.00</span></span>
-                    <span style="color:#4444ff">Z:<span id="lbl-tz">0.00</span></span>
-                </div>
-            </div>
-            <div id="joint-jog-container"></div>
-            <div class="action-block">
-                <button class="btn-action" id="btn-reset-pos">🔄 RESET JOINT POSITIONS (0°)</button>
-                
-                <div class="jog-row" style="margin-bottom: 4px;">
-                    <div class="jog-label" style="font-size: 11px; color: #aaa;">SPEED</div>
-                    <input type="range" id="sld-speed" min="5" max="100" value="50" step="5" style="flex-grow: 1; margin: 0 10px; accent-color: #ff9800;">
-                    <div class="val-display" id="val-speed" style="width: 35px; color: #ff9800; font-weight: bold;">50%</div>
-                </div>
-                <button class="btn-action" id="btn-save-step">💾 RECORD STEP POSITION</button>
-                <button class="btn-action" id="btn-run-sim">▶️ RUN SIMULATION</button>
-                <button class="btn-action" id="btn-clear-seq">🗑️ CLEAR SEQUENCE</button>
-                <div class="step-counter" id="lbl-steps">Steps: 0</div>
+        <div id="tcp-monitor">
+            <div style="color: #00ffcc; font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
+            <div class="tcp-grid">
+                <span style="color:#ff4444">X:<span id="lbl-tx">0.00</span></span>
+                <span style="color:#44ff44">Y:<span id="lbl-ty">0.00</span></span>
+                <span style="color:#4444ff">Z:<span id="lbl-tz">0.00</span></span>
             </div>
         </div>
-
-        <div id="canvas-container"></div>
-
-        <script>
-            const data = JSON.parse(JSON.stringify(__PAYLOAD_STREAM__));
-            const dh = data.dhConfig;
-            const limitsConfig = data.jointLimits;
-
-            let localJointAngles = [...data.initialAngles];
-            let lastComputedTransforms = [];
-            let embeddedTrajectory = [...data.trajectory];
-            let activeJogMode = "joint";
+        <div id="joint-jog-container"></div>
+        <div class="action-block">
+            <button class="btn-action" id="btn-reset-pos">🔄 RESET JOINT POSITIONS (0°)</button>
             
-            const J_STEP = 5 * (Math.PI / 180);
+            <div class="jog-row" style="margin-bottom: 4px;">
+                <div class="jog-label" style="font-size: 11px; color: #aaa;">SPEED</div>
+                <input type="range" id="sld-speed" min="5" max="100" value="50" step="5" style="flex-grow: 1; margin: 0 10px; accent-color: #ff9800;">
+                <div class="val-display" id="val-speed" style="width: 35px; color: #ff9800; font-weight: bold;">50%</div>
+            </div>
+            <button class="btn-action" id="btn-save-step">💾 RECORD STEP POSITION</button>
+            <button class="btn-action" id="btn-run-sim">▶️ RUN SIMULATION</button>
+            <button class="btn-action" id="btn-clear-seq">🗑️ CLEAR SEQUENCE</button>
+            <div class="step-counter" id="lbl-steps">Steps: 0</div>
+        </div>
+    </div>
 
-            THREE.Object3D.DefaultUp.set(0, 0, 1);
-            const container = document.getElementById('canvas-container');
-            const scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111111);
+    <div id="canvas-container"></div>
 
-            const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 100);
-            camera.position.set(4.0, -4.0, 3.0);
+    <script>
+        const data = JSON.parse(JSON.stringify(__PAYLOAD_STREAM__));
+        const dh = data.dhConfig;
+        const limitsConfig = data.jointLimits;
 
-            const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-            renderer.setSize(container.clientWidth, container.clientHeight);
-            container.appendChild(renderer.domElement);
+        let localJointAngles = [...data.initialAngles];
+        let lastComputedTransforms = [];
+        let embeddedTrajectory = [...data.trajectory];
+        let activeJogMode = "joint";
+        
+        const J_STEP = 5 * (Math.PI / 180);
 
-            const controls = new THREE.OrbitControls(camera, renderer.domElement);
-            controls.target.set(0.8, 0, 0.8);
+        THREE.Object3D.DefaultUp.set(0, 0, 1);
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111);
 
-            scene.add(new THREE.AmbientLight(0x777777));
-            const light1 = new THREE.DirectionalLight(0xffffff, 0.9); light1.position.set(5, 5, 10); scene.add(light1);
-            const light2 = new THREE.DirectionalLight(0xffffff, 0.4); light2.position.set(-5, -5, 5); scene.add(light2);
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 100);
+        camera.position.set(4.0, -4.0, 3.0);
 
-            const grid = new THREE.GridHelper(15, 30, 0x555555, 0x252525);
-            grid.rotation.x = Math.PI / 2;
-            scene.add(grid);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        container.appendChild(renderer.domElement);
 
-            const loader = new THREE.STLLoader();
-            const links = [];
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.target.set(0.8, 0, 0.8);
+
+        scene.add(new THREE.AmbientLight(0x777777));
+        const light1 = new THREE.DirectionalLight(0xffffff, 0.9); light1.position.set(5, 5, 10); scene.add(light1);
+        const light2 = new THREE.DirectionalLight(0xffffff, 0.4); light2.position.set(-5, -5, 5); scene.add(light2);
+
+        const grid = new THREE.GridHelper(15, 30, 0x555555, 0x252525);
+        grid.rotation.x = Math.PI / 2;
+        scene.add(grid);
+
+        const loader = new THREE.STLLoader();
+        const links = [];
+        
+        let gunMesh = new THREE.Group();
+        let jigMesh = new THREE.Group();
+        let internalJigContent = new THREE.Group();
+        
+        scene.add(gunMesh);
+        jigMesh.add(internalJigContent);
+        scene.add(jigMesh);
+
+        const tcpAnchorPivot = new THREE.Object3D();
+        scene.add(tcpAnchorPivot);
+
+        const transformGizmo = new THREE.TransformControls(camera, renderer.domElement);
+        transformGizmo.size = 0.65;
+        transformGizmo.setMode("translate");
+        transformGizmo.attach(tcpAnchorPivot);
+        transformGizmo.visible = false;
+        transformGizmo.enabled = false;
+        scene.add(transformGizmo);
+
+        transformGizmo.addEventListener('dragging-changed', function (e) {
+            controls.enabled = !e.value;
+        });
+
+        transformGizmo.addEventListener('objectChange', function () {
+            if ((activeJogMode !== "tcp" && activeJogMode !== "gesture") || runSimulation) return;
+            executeCyclicInverseKinematics(tcpAnchorPivot.position);
+        });
+
+        function base64ToArrayBuffer(base64Str) {
+            const binaryString = window.atob(base64Str);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
+            return bytes.buffer;
+        }
+
+        let targetColor = 0xcccccc; 
+        if (data.profileName === "Yaskawa_3500") { targetColor = 0x0055ff; } 
+        else if (data.profileName === "KUKA_KR150") { targetColor = 0xff6600; }
+
+        for(let i=0; i<7; i++) {
+            let mesh;
+            let currentLinkColor = (i === 0) ? 0x222222 : targetColor;
+
+            if(data.linkGeometries && data.linkGeometries[i] && data.linkGeometries[i].length > 0) {
+                const geometry = loader.parse(base64ToArrayBuffer(data.linkGeometries[i]));
+                const material = new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 });
+                mesh = new THREE.Mesh(geometry, material);
+            } else {
+                const h = data.fallbackHeights[i];
+                const geometry = new THREE.CylinderGeometry(0.18, 0.22, h, 24);
+                geometry.rotateX(Math.PI / 2); 
+                if(i === 1 || i === 2 || i === 3) { geometry.translate(0, 0, h / 2); }
+                mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 }));
+            }
+            scene.add(mesh);
+            links.push(mesh);
+        }
+
+        let toolAdjustmentGroup = new THREE.Group();
+        gunMesh.add(toolAdjustmentGroup);
+
+        if(data.gunData && data.gunData.length > 0) {
+            const geometry = loader.parse(base64ToArrayBuffer(data.gunData));
+            geometry.center(); 
+            const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
+            gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
+            toolAdjustmentGroup.add(gunInternalMesh);
+        }
+
+        if(data.jigData && data.jigData.length > 0) {
+            const geometry = loader.parse(base64ToArrayBuffer(data.jigData));
+            geometry.center(); 
+            const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.6 }));
+            m.scale.set(data.jigScale, data.jigScale, data.jigScale);
+            m.rotation.x = data.rotX;
+            m.rotation.y = data.rotY;
+            internalJigContent.add(m);
+        }
+
+        function getLinkStructureBaseMatrix(linkData) {
+            let mTrans = new THREE.Matrix4().makeTranslation(linkData.trans[0], linkData.trans[1], linkData.trans[2]);
+            let mOrient = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(linkData.orient[0], linkData.orient[1], linkData.orient[2], 'XYZ'));
+            return mTrans.multiply(mOrient);
+        }
+
+        function computeForwardKinematics(angles) {
+            const computedTransforms = [];
+            let currentMatrix = new THREE.Matrix4();
+            computedTransforms.push({ pos: new THREE.Vector3(0,0,0).toArray(), quat: new THREE.Quaternion().toArray() });
+
+            let m1 = getLinkStructureBaseMatrix(dh[0]).multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
+            currentMatrix.multiply(m1);
+            computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+
+            let m2 = getLinkStructureBaseMatrix(dh[1]).multiply(new THREE.Matrix4().makeRotationY(angles[2]));
+            currentMatrix.multiply(m2);
+            computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+
+            let m2_adj = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+            currentMatrix.multiply(m2_adj);
+            computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+
+            let m4 = getLinkStructureBaseMatrix(dh[3]).multiply(new THREE.Matrix4().makeRotationX(angles[4]));
+            currentMatrix.multiply(m4);
             
-            let gunMesh = new THREE.Group();
-            let jigMesh = new THREE.Group();
-            let internalJigContent = new THREE.Group();
-            
-            scene.add(gunMesh);
-            jigMesh.add(internalJigContent);
-            scene.add(jigMesh);
-
-            const tcpAnchorPivot = new THREE.Object3D();
-            scene.add(tcpAnchorPivot);
-
-            const transformGizmo = new THREE.TransformControls(camera, renderer.domElement);
-            transformGizmo.size = 0.65;
-            transformGizmo.setMode("translate");
-            transformGizmo.attach(tcpAnchorPivot);
-            transformGizmo.visible = false;
-            transformGizmo.enabled = false;
-            scene.add(transformGizmo);
-
-            transformGizmo.addEventListener('dragging-changed', function (e) {
-                controls.enabled = !e.value;
-            });
-
-            transformGizmo.addEventListener('objectChange', function () {
-                if ((activeJogMode !== "tcp" && activeJogMode !== "gesture") || runSimulation) return;
-                executeCyclicInverseKinematics(tcpAnchorPivot.position);
-            });
-
-            function base64ToArrayBuffer(base64Str) {
-                const binaryString = window.atob(base64Str);
-                const len = binaryString.length;
-                const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
-                return bytes.buffer;
-            }
-
-            let targetColor = 0xcccccc; 
-            if (data.profileName === "Yaskawa_3500") { targetColor = 0x0055ff; } 
-            else if (data.profileName === "KUKA_KR150") { targetColor = 0xff6600; }
-
-            for(let i=0; i<7; i++) {
-                let mesh;
-                let currentLinkColor = (i === 0) ? 0x222222 : targetColor;
-
-                if(data.linkGeometries && data.linkGeometries[i] && data.linkGeometries[i].length > 0) {
-                    const geometry = loader.parse(base64ToArrayBuffer(data.linkGeometries[i]));
-                    const material = new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 });
-                    mesh = new THREE.Mesh(geometry, material);
-                } else {
-                    const h = data.fallbackHeights[i];
-                    const geometry = new THREE.CylinderGeometry(0.18, 0.22, h, 24);
-                    geometry.rotateX(Math.PI / 2); 
-                    if(i === 1 || i === 2 || i === 3) { geometry.translate(0, 0, h / 2); }
-                    mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 }));
-                }
-                scene.add(mesh);
-                links.push(mesh);
-            }
-
-            let toolAdjustmentGroup = new THREE.Group();
-            gunMesh.add(toolAdjustmentGroup);
-
-            if(data.gunData && data.gunData.length > 0) {
-                const geometry = loader.parse(base64ToArrayBuffer(data.gunData));
-                geometry.center(); 
-                const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
-                gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
-                toolAdjustmentGroup.add(gunInternalMesh);
-            }
-
-            if(data.jigData && data.jigData.length > 0) {
-                const geometry = loader.parse(base64ToArrayBuffer(data.jigData));
-                geometry.center(); 
-                const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.6 }));
-                m.scale.set(data.jigScale, data.jigScale, data.jigScale);
-                m.rotation.x = data.rotX;
-                m.rotation.y = data.rotY;
-                internalJigContent.add(m);
-            }
-
-            function getLinkStructureBaseMatrix(linkData) {
-                let mTrans = new THREE.Matrix4().makeTranslation(linkData.trans[0], linkData.trans[1], linkData.trans[2]);
-                let mOrient = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(linkData.orient[0], linkData.orient[1], linkData.orient[2], 'XYZ'));
-                return mTrans.multiply(mOrient);
-            }
-
-            function computeForwardKinematics(angles) {
-                const computedTransforms = [];
-                let currentMatrix = new THREE.Matrix4();
-                computedTransforms.push({ pos: new THREE.Vector3(0,0,0).toArray(), quat: new THREE.Quaternion().toArray() });
-
-                let m1 = getLinkStructureBaseMatrix(dh[0]).multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
-                currentMatrix.multiply(m1);
+            if (data.profileName === "Yaskawa_3500") {
                 computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+            } else {
+                let correctionMatrix = currentMatrix.clone();
+                let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
+                let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
+                computedTransforms.push({ pos: fixedPos.toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+            }
 
-                let m2 = getLinkStructureBaseMatrix(dh[1]).multiply(new THREE.Matrix4().makeRotationY(angles[2]));
-                currentMatrix.multiply(m2);
-                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+            let m5 = getLinkStructureBaseMatrix(dh[4]).multiply(new THREE.Matrix4().makeRotationY(angles[5]));
+            currentMatrix.multiply(m5);
+            computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                let m2_adj = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
-                currentMatrix.multiply(m2_adj);
-                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+            let m6 = getLinkStructureBaseMatrix(dh[5]);
+            if (data.profileName === "Yaskawa_3500") { m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6])); }
+            else { m6.multiply(new THREE.Matrix4().makeRotationX(angles[6])); }
+            currentMatrix.multiply(m6);
+            computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
 
-                let m4 = getLinkStructureBaseMatrix(dh[3]).multiply(new THREE.Matrix4().makeRotationX(angles[4]));
-                currentMatrix.multiply(m4);
+            return computedTransforms;
+        }
+
+        function executeCyclicInverseKinematics(targetGlobalPos) {
+            if (links[6]) {
+                let physicalWristPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                let deviationDistance = targetGlobalPos.distanceTo(physicalWristPos);
                 
-                if (data.profileName === "Yaskawa_3500") {
-                    computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
-                } else {
-                    let correctionMatrix = currentMatrix.clone();
-                    let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
-                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
-                    computedTransforms.push({ pos: fixedPos.toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+                if (deviationDistance > 0.10) {
+                    let allowedDirection = new THREE.Vector3().subVectors(targetGlobalPos, physicalWristPos).normalize();
+                    targetGlobalPos.copy(physicalWristPos).add(allowedDirection.multiplyScalar(0.10));
+                    tcpAnchorPivot.position.copy(targetGlobalPos);
                 }
-
-                let m5 = getLinkStructureBaseMatrix(dh[4]).multiply(new THREE.Matrix4().makeRotationY(angles[5]));
-                currentMatrix.multiply(m5);
-                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
-
-                let m6 = getLinkStructureBaseMatrix(dh[5]);
-                if (data.profileName === "Yaskawa_3500") { m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6])); }
-                else { m6.multiply(new THREE.Matrix4().makeRotationX(angles[6])); }
-                currentMatrix.multiply(m6);
-                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
-
-                return computedTransforms;
             }
 
-            function executeCyclicInverseKinematics(targetGlobalPos) {
-                if (links[6]) {
-                    let physicalWristPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
-                    let deviationDistance = targetGlobalPos.distanceTo(physicalWristPos);
+            let maxReachRadius = 2.95; 
+            if (data.profileName === "ABB_4400") maxReachRadius = 1.95;
+            if (data.profileName === "Yaskawa_3500") maxReachRadius = 2.45;
+
+            let distanceFromBase = targetGlobalPos.length();
+            if (distanceFromBase > maxReachRadius) {
+                targetGlobalPos.normalize().multiplyScalar(maxReachRadius);
+                tcpAnchorPivot.position.copy(targetGlobalPos);
+            }
+
+            for (let iteration = 0; iteration < 12; iteration++) {
+                let currentTransforms = computeForwardKinematics(localJointAngles);
+                let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
+                let errorDistance = new THREE.Vector3().copy(targetGlobalPos).sub(endEffectorPos);
+                if (errorDistance.length() < 0.0002) break;
+
+                for (let j = 1; j <= 6; j++) {
+                    if (activeJogMode === "gesture" && j === 6) continue;
+
+                    let jointPosition = new THREE.Vector3().fromArray(currentTransforms[j-1].pos);
+                    let axisVectorDirection = new THREE.Vector3(0, 0, 1);
+                    if (j === 2 || j === 3 || j === 5) axisVectorDirection.set(0, 1, 0);
+                    if (j === 4 || (j === 6 && data.profileName !== "Yaskawa_3500")) axisVectorDirection.set(1, 0, 0);
+
+                    let componentToEE = new THREE.Vector3().subVectors(endEffectorPos, jointPosition).normalize();
+                    let componentToTarget = new THREE.Vector3().subVectors(targetGlobalPos, jointPosition).normalize();
+
+                    let angleScalarDot = componentToEE.dot(componentToTarget);
+                    let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.12;
                     
-                    if (deviationDistance > 0.10) {
-                        let allowedDirection = new THREE.Vector3().subVectors(targetGlobalPos, physicalWristPos).normalize();
-                        targetGlobalPos.copy(physicalWristPos).add(allowedDirection.multiplyScalar(0.10));
-                        tcpAnchorPivot.position.copy(targetGlobalPos);
+                    if (j === 4) {
+                        localizedDeltaTheta *= 0.15;
+                        if (Math.abs(localJointAngles[5]) < 0.10) {
+                            localizedDeltaTheta *= 0.05;
+                        }
+                    }
+                    if (j === 5) localizedDeltaTheta *= 0.25; 
+                    if (j === 6) localizedDeltaTheta *= 0.35;
+
+                    if (localizedDeltaTheta > 0.0001) {
+                        let directionalCross = new THREE.Vector3().crossVectors(componentToEE, componentToTarget);
+                        if (directionalCross.dot(axisVectorDirection) < 0) { localJointAngles[j] -= localizedDeltaTheta; }
+                        else { localJointAngles[j] += localizedDeltaTheta; }
+                        localJointAngles[j] = Math.max(limitsConfig[j-1][0], Math.min(limitsConfig[j-1][1], localJointAngles[j]));
+                    }
+                }
+            }
+            refreshSceneDisplay(false); 
+            updateMonitorHUDText(targetGlobalPos);
+        }
+
+        function refreshSceneDisplay(updateGizmoPosition = true) {
+            lastComputedTransforms = computeForwardKinematics(localJointAngles);
+            for(let i=0; i<7; i++) {
+                if(links[i] && lastComputedTransforms[i]) {
+                    links[i].position.fromArray(lastComputedTransforms[i].pos);
+                    links[i].quaternion.fromArray(lastComputedTransforms[i].quat);
+                }
+            }
+            if(links[6]) {
+                links[6].updateMatrixWorld(); gunMesh.position.copy(links[6].position); gunMesh.quaternion.copy(links[6].quaternion);
+                gunMesh.translateX(data.toolOffsetX); gunMesh.translateY(data.toolOffsetY); gunMesh.translateZ(data.toolOffsetZ);
+                toolAdjustmentGroup.rotation.set(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ');
+
+                if (updateGizmoPosition || runSimulation) {
+                    tcpAnchorPivot.position.copy(links[6].position);
+                    tcpAnchorPivot.quaternion.copy(links[6].quaternion);
+                    transformGizmo.updateMatrixWorld();
+                    updateMonitorHUDText(tcpAnchorPivot.position);
+                }
+            }
+            jigMesh.position.set(data.jigX, data.jigY, data.jigZ);
+            internalJigContent.rotation.z = localJointAngles[7];
+
+            for(let i=1; i<=7; i++) {
+                let displayElement = document.getElementById('val-' + i);
+                if (displayElement) { displayElement.innerText = (localJointAngles[i] * (180 / Math.PI)).toFixed(1) + '°'; }
+            }
+        }
+
+        function triggerManualStepRecord() {
+            if(runSimulation) return;
+            lastComputedTransforms = computeForwardKinematics(localJointAngles);
+            embeddedTrajectory.push({ angles: [...localJointAngles], transforms: JSON.parse(JSON.stringify(lastComputedTransforms)) });
+            updateUIElements();
+            const targetUrl = new URL(window.parent.location.href);
+            targetUrl.searchParams.set("event", "sync_sequence");
+            targetUrl.searchParams.set("program_data", JSON.stringify(embeddedTrajectory));
+            window.parent.history.replaceState({}, '', targetUrl.toString());
+        }
+
+        function updateMonitorHUDText(vectorPos) {
+            document.getElementById("lbl-tx").innerText = vectorPos.x.toFixed(2);
+            document.getElementById("lbl-ty").innerText = vectorPos.y.toFixed(2);
+            document.getElementById("lbl-tz").innerText = vectorPos.z.toFixed(2);
+        }
+
+        const btnJoint = document.getElementById("mode-joint");
+        const btnTCP = document.getElementById("mode-tcp");
+        const btnGesture = document.getElementById("mode-gesture");
+        const rowsWrap = document.getElementById("joint-jog-container");
+        const hudMonitor = document.getElementById("tcp-monitor");
+        
+        const arContainer = document.getElementById("ar-viewport");
+        const videoElement = document.getElementById("webcam-feedback");
+
+        btnJoint.addEventListener("click", () => {
+            activeJogMode = "joint"; 
+            btnJoint.classList.add("active"); btnTCP.classList.remove("active"); btnGesture.classList.remove("active");
+            rowsWrap.style.display = "block"; hudMonitor.style.display = "none"; arContainer.style.display = "none";
+            transformGizmo.visible = false; transformGizmo.enabled = false;
+            stopWebcam();
+            refreshSceneDisplay(true); 
+        });
+
+        btnTCP.addEventListener("click", () => {
+            activeJogMode = "tcp"; 
+            btnTCP.classList.add("active"); btnJoint.classList.remove("active"); btnGesture.classList.remove("active");
+            rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "none";
+            transformGizmo.visible = true; transformGizmo.enabled = true; 
+            refreshSceneDisplay(true); 
+            stopWebcam();
+        });
+
+        btnGesture.addEventListener("click", () => {
+            activeJogMode = "gesture";
+            btnGesture.classList.add("active"); btnJoint.classList.remove("active"); btnTCP.classList.remove("active");
+            rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "block";
+            transformGizmo.visible = true; transformGizmo.enabled = true; 
+            refreshSceneDisplay(true);
+            startWebcam();
+        });
+
+        const rowsContainer = document.getElementById('joint-jog-container');
+        for(let i=1; i<=6; i++) {
+            const row = document.createElement('div');
+            row.className = 'jog-row';
+            row.innerHTML = '<button class="jog-btn" id="btn-m-' + i + '">-</button><div class="jog-label">A' + i + '</div><div class="val-display" id="val-' + i + '">0.0°</div><button class="jog-btn" id="btn-p-' + i + '">+</button>';
+            rowsContainer.appendChild(row);
+            (function(idx) {
+                document.getElementById('btn-m-' + idx).addEventListener('click', () => jogJoint(idx, -1));
+                document.getElementById('btn-p-' + idx).addEventListener('click', () => jogJoint(idx, 1));
+            })(i);
+        }
+        
+        const e1Row = document.createElement('div');
+        e1Row.className = 'jog-row'; e1Row.style.marginTop = '10px'; e1Row.style.borderTop = '1px solid #333'; e1Row.style.paddingTop = '8px';
+        e1Row.innerHTML = '<button class="jog-btn" id="btn-m-7">-</button><div class="jog-label" style="color:#ff9800;">E1</div><div class="val-display" id="val-7">0.0°</div><button class="jog-btn" id="btn-p-7">+</button>';
+        rowsContainer.appendChild(e1Row);
+        document.getElementById('btn-m-7').addEventListener('click', () => jogJoint(7, -1));
+        document.getElementById('btn-p-7').addEventListener('click', () => jogJoint(7, 1));
+
+        function jogJoint(jointIdx, direction) {
+            if(runSimulation) return;
+            let nextAngle = localJointAngles[jointIdx] + (direction * J_STEP);
+            if (nextAngle >= limitsConfig[jointIdx-1][0] && nextAngle <= limitsConfig[jointIdx-1][1]) {
+                localJointAngles[jointIdx] = nextAngle;
+                refreshSceneDisplay(true); 
+            }
+        }
+
+        document.getElementById('btn-reset-pos').addEventListener('click', () => {
+            if(runSimulation) return;
+            for(let i = 1; i <= 6; i++) { localJointAngles[i] = 0.0; }
+            refreshSceneDisplay(true);
+            
+            const targetUrl = new URL(window.parent.location.href);
+            targetUrl.searchParams.set("event", "reset_joints");
+            window.parent.location.href = targetUrl.toString();
+        });
+
+        function updateUIElements() { document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length; }
+        document.getElementById('sld-speed').addEventListener('input', (e) => { document.getElementById('val-speed').innerText = e.target.value + "%"; });
+
+        document.getElementById('btn-save-step').addEventListener('click', triggerManualStepRecord);
+
+        document.getElementById('btn-run-sim').addEventListener('click', () => {
+            if(embeddedTrajectory.length < 2) { alert("Please record at least 2 structural step points."); return; }
+            simStepIndex = 0; interpolationFraction = 0; runSimulation = true;
+        });
+
+        document.getElementById('btn-clear-seq').addEventListener('click', () => {
+            embeddedTrajectory = []; updateUIElements();
+            const targetUrl = new URL(window.parent.location.href);
+            targetUrl.searchParams.set("event", "clear_sequence");
+            window.parent.location.href = targetUrl.toString();
+        });
+
+        let simStepIndex = 0; let interpolationFraction = 0; let runSimulation = false;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            if (runSimulation && embeddedTrajectory.length >= 2) {
+                document.getElementById('jog-pendant').style.opacity = "0.3"; 
+                document.getElementById('status').innerText = "Status: Running Sequence Simulation";
+                let currentPoint = embeddedTrajectory[simStepIndex];
+                let nextPoint = embeddedTrajectory[simStepIndex + 1];
+                let computedStepIncrement = (parseFloat(document.getElementById('sld-speed').value) / 100) * 0.04;
+
+                interpolationFraction += computedStepIncrement;
+                if(interpolationFraction >= 1.0) {
+                    interpolationFraction = 0; simStepIndex++;
+                    if (simStepIndex >= embeddedTrajectory.length - 1) { runSimulation = false; simStepIndex = 0; }
+                }
+
+                let blendedTransforms = [];
+                for(let i=0; i<7; i++) {
+                    let blendedPos = new THREE.Vector3().lerpVectors(new THREE.Vector3().fromArray(currentPoint.transforms[i].pos), new THREE.Vector3().fromArray(nextPoint.transforms[i].pos), interpolationFraction).toArray();
+                    let blendedQuat = new THREE.Quaternion().fromArray(currentPoint.transforms[i].quat).slerp(new THREE.Quaternion().fromArray(nextPoint.transforms[i].quat), interpolationFraction).toArray();
+                    blendedTransforms.push({ "pos": blendedPos, "quat": blendedQuat });
+                }
+                localJointAngles = [...currentPoint.angles]; 
+                updateSceneTransforms(blendedTransforms, data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ, data.toolRotX, data.toolRotY, data.toolRotZ, data.jigX, data.jigY, data.jigZ, ((1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7]));
+            } else {
+                document.getElementById('jog-pendant').style.opacity = "1.0";
+                if(activeJogMode === "gesture") {
+                    document.getElementById('status').innerText = "Status: Hybrid Gesture Control Active";
+                } else {
+                    document.getElementById('status').innerText = "Status: Online (WebGL Ready)";
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        function updateSceneTransforms(transforms, ox, oy, oz, rx, ry, rz, jigX, jigY, jigZ, e1RotAngle) {
+            for(let i=0; i<7; i++) {
+                if(links[i] && transforms[i]) { links[i].position.fromArray(transforms[i].pos); links[i].quaternion.fromArray(transforms[i].quat); }
+            }
+            if(links[6]) {
+                links[6].updateMatrixWorld(); gunMesh.position.copy(links[6].position); gunMesh.quaternion.copy(links[6].quaternion);
+                gunMesh.translateX(ox); gunMesh.translateY(oy); gunMesh.translateZ(oz);
+                toolAdjustmentGroup.rotation.set(rx, ry, rz, 'XYZ');
+                
+                tcpAnchorPivot.position.copy(links[6].position);
+                tcpAnchorPivot.quaternion.copy(links[6].quaternion);
+                transformGizmo.updateMatrixWorld();
+            }
+            jigMesh.position.set(jigX, jigY, jigZ); internalJigContent.rotation.z = e1RotAngle;
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+
+        let mpHands = null;
+        let mpCamera = null;
+        const arCanvas = document.getElementById("ar-overlay-canvas");
+        const arCtx = arCanvas.getContext("2d");
+        
+        let anchorTCPPos = new THREE.Vector3();
+        let isPinchActive = false; 
+        let lastPinchTime = 0;
+        
+        let isHandInsideBox = false;
+        let handEngagementStartTime = 0;
+        let isHandEngaged = false; 
+        
+        let handCalibrationBaseline = null; 
+        let robotCalibrationBaseline = null;
+
+        const boxMinX = 0.33;
+        const boxMaxX = 0.67;
+        const boxMinY = 0.30;
+        const boxMaxY = 0.70;
+
+        function onHandResults(results) {
+            arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
+            if (activeJogMode !== "gesture" || runSimulation) return;
+
+            arCtx.lineWidth = 2;
+            if (isHandEngaged) {
+                arCtx.strokeStyle = "#4caf50"; 
+                arCtx.fillStyle = "rgba(76, 175, 80, 0.05)";
+            } else if (isHandInsideBox) {
+                arCtx.strokeStyle = "#ffeb3b"; 
+                arCtx.fillStyle = "rgba(255, 235, 59, 0.05)";
+            } else {
+                arCtx.strokeStyle = "#ff9800"; 
+                arCtx.fillStyle = "rgba(255, 152, 0, 0.03)";
+            }
+            
+            const bx = boxMinX * arCanvas.width;
+            const by = boxMinY * arCanvas.height;
+            const bw = (boxMaxX - boxMinX) * arCanvas.width;
+            const bh = (boxMaxY - boxMinY) * arCanvas.height;
+            arCtx.fillRect(bx, by, bw, bh);
+            arCtx.strokeRect(bx, by, bw, bh);
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const handLandmarks = results.multiHandLandmarks[0];
+                const palmCenter = handLandmarks[9];
+                const wrist = handLandmarks[0];
+                
+                const insideBox = (palmCenter.x >= boxMinX && palmCenter.x <= boxMaxX && palmCenter.y >= boxMinY && palmCenter.y <= boxMaxY);
+                const currentTimeMillis = Date.now();
+
+                let currentRawX = 0.8 + (1.0 - palmCenter.z) * 0.9;
+                let currentRawY = -(palmCenter.x - 0.5) * 1.6;
+                let currentRawZ = 0.3 + (1.0 - palmCenter.y) * 1.0;
+                let rawHandVec = new THREE.Vector3(currentRawX, currentRawY, currentRawZ);
+
+                if (!isHandEngaged) {
+                    if (insideBox) {
+                        if (!isHandInsideBox) {
+                            isHandInsideBox = true;
+                            handEngagementStartTime = currentTimeMillis;
+                        }
+                        
+                        let secondsElapsed = (currentTimeMillis - handEngagementStartTime) / 1000;
+                        let remainingTime = Math.max(0, (2.0 - secondsElapsed)).toFixed(1);
+                        
+                        if (secondsElapsed >= 2.0) {
+                            isHandEngaged = true; 
+                            document.getElementById("ar-hud-text").innerHTML = "🟢 TRACKING ACTIVE: MOVE PALM";
+                            document.getElementById("ar-hud-text").style.color = "#4caf50";
+                            
+                            handCalibrationBaseline = rawHandVec.clone();
+                            if (links[6]) {
+                                robotCalibrationBaseline = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                                tcpAnchorPivot.position.copy(robotCalibrationBaseline);
+                            }
+                        } else {
+                            document.getElementById("ar-hud-text").innerHTML = "⏳ INITIALIZING: HOLD STILL (" + remainingTime + "s)";
+                            document.getElementById("ar-hud-text").style.color = "#ffeb3b";
+                            
+                            if (links[6]) {
+                                let currentRobotPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                                tcpAnchorPivot.position.copy(currentRobotPos);
+                            }
+                        }
+                    } else {
+                        isHandInsideBox = false;
+                        handCalibrationBaseline = null;
+                        robotCalibrationBaseline = null;
+                        document.getElementById("ar-hud-text").innerHTML = "⚠️ PLACE PALM INSIDE THE CENTER BOX";
+                        document.getElementById("ar-hud-text").style.color = "#ff9800";
+                        
+                        if (links[6]) {
+                            tcpAnchorPivot.position.copy(new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld));
+                        }
+                    }
+                } else {
+                    if (palmCenter.x < 0.05 || palmCenter.x > 0.95 || palmCenter.y < 0.05 || palmCenter.y > 0.95) {
+                        isHandEngaged = false; 
+                        isHandInsideBox = false;
+                        handCalibrationBaseline = null;
+                        robotCalibrationBaseline = null;
                     }
                 }
 
-                let maxReachRadius = 2.95; 
-                if (data.profileName === "ABB_4400") maxReachRadius = 1.95;
-                if (data.profileName === "Yaskawa_3500") maxReachRadius = 2.45;
+                const screenX = palmCenter.x * arCanvas.width;
+                const screenY = palmCenter.y * arCanvas.height;
 
-                let distanceFromBase = targetGlobalPos.length();
-                if (distanceFromBase > maxReachRadius) {
-                    targetGlobalPos.normalize().multiplyScalar(max
+                if (isHandEngaged && handCalibrationBaseline && robotCalibrationBaseline) {
+                    let deltaMove = new THREE.Vector3().subVectors(rawHandVec, handCalibrationBaseline);
+                    let calculatedTarget = new THREE.Vector3().addVectors(robotCalibrationBaseline, deltaMove);
+                    
+                    tcpAnchorPivot.position.lerp(calculatedTarget, 0.10);
+                    executeCyclicInverseKinematics(tcpAnchorPivot.position);
+
+                    const p5 = handLandmarks[5];   
+                    const p17 = handLandmarks[17]; 
+                    let currentRoll = Math.atan2(p17.y - p5.y, p17.x - p5.x);
+                    
+                    if (window.lastHandRoll === undefined) { window.lastHandRoll = currentRoll; }
+                    let deltaRoll = currentRoll - window.lastHandRoll;
+                    if (deltaRoll > Math.PI) deltaRoll -= 2 * Math.PI;
+                    if (deltaRoll < -Math.PI) deltaRoll += 2 * Math.PI;
+                    window.lastHandRoll = currentRoll;
+
+                    if (Math.abs(deltaRoll) > 0.005) {
+                        localJointAngles[6] += deltaRoll * 0.45; 
+                        localJointAngles[6] = Math.max(limitsConfig[5][0], Math.min(limitsConfig[5][1], localJointAngles[6]));
+                    }
+
+                    const thumbTip = handLandmarks[4];
+                    const indexTip = handLandmarks[8];
+                    let dx = thumbTip.x - indexTip.x;
+                    let dy = thumbTip.y - indexTip.y;
+                    let dz = thumbTip.z - indexTip.z;
+                    let pinchDistance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+                    if (pinchDistance < 0.045) {
+                        if (!isPinchActive) {
+                            let currentTime = Date.now();
+                            if (currentTime - lastPinchTime > 1200) { 
+                                isPinchActive = true;
+                                lastPinchTime = currentTime;
+                                triggerManualStepRecord();
+                                document.getElementById('status').style.background = "rgba(76, 175, 80, 0.95)";
+                                setTimeout(() => { document.getElementById('status').style.background = "rgba(20,20,20,0.8)"; }, 400);
+                            }
+                        }
+                    } else {
+                        isPinchActive = false;
+                    }
+
+                    const baseScreenX = wrist.x * arCanvas.width;
+                    const baseScreenY = wrist.y * arCanvas.height;
+                    const dirX = screenX - baseScreenX;
+                    const dirY = screenY - baseScreenY;
+                    const distance = Math.sqrt(dirX * dirX + dirY * dirY);
+                    const uX = dirX / (distance || 1);
+                    const uY = dirY / (distance || 1);
+                    const nX = -uY;
+                    const nY = uX;
+                    const arrowLength = Math.max(30, distance * 0.7);
+
+                    arCtx.lineWidth = 4;
+                    arCtx.lineCap = "round";
+                    arCtx.strokeStyle = "#2196f3";
+                    arCtx.beginPath(); arCtx.moveTo(screenX, screenY); arCtx.lineTo(screenX + uX * arrowLength, screenY + uY * arrowLength); arCtx.stroke();
+
+                    arCtx.strokeStyle = "#f44336";
+                    arCtx.beginPath(); arCtx.moveTo(screenX, screenY); arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7)); arCtx.stroke();
+                }
+
+                arCtx.fillStyle = isHandEngaged ? (isPinchActive ? "#4caf50" : "#00ffcc") : (isHandInsideBox ? "#ffeb3b" : "#ff9800");
+                arCtx.shadowColor = arCtx.fillStyle;
+                arCtx.shadowBlur = 10;
+                arCtx.beginPath(); arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI); arCtx.fill();
+                arCtx.shadowBlur = 0;
+            } else {
+                if (isHandInsideBox || isHandEngaged) {
+                    isHandEngaged = false;
+                    isHandInsideBox = false;
+                    handCalibrationBaseline = null;
+                    robotCalibrationBaseline = null;
+                    document.getElementById("ar-hud-text").innerHTML = "PLACE HAND INSIDE BOX TO ENGAGE";
+                    document.getElementById("ar-hud-text").style.color = "#ff9800";
+                }
+            }
+        }
+
+        function startWebcam() {
+            isHandEngaged = false;
+            isHandInsideBox = false;
+            handCalibrationBaseline = null;
+            robotCalibrationBaseline = null;
+            if (!mpHands) {
+                mpHands = new Hands({ locateFile: (file) => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/' + file });
+                mpHands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+                mpHands.onResults(onHandResults);
+            }
+            if (!mpCamera) {
+                mpCamera = new Camera(videoElement, {
+                    onFrame: async () => { if (activeJogMode === "gesture") { await mpHands.send({ image: videoElement }); } },
+                    width: 320, height: 240
+                });
+            }
+            mpCamera.start().catch(err => { alert("Camera access denied or unavailable: " + err); });
+        }
+
+        function stopWebcam() { 
+            isHandEngaged = false;
+            isHandInsideBox = false;
+            handCalibrationBaseline = null;
+            robotCalibrationBaseline = null;
+            if (mpCamera) { mpCamera.stop(); mpCamera = null; } 
+        }
+
+        refreshSceneDisplay(true); updateUIElements(); animate();
+    </script>
+</body>
+</html>"""
+    
+    # Safely swap out variables without escaping problems breaking your Python interpreter layout
+    html_source = html_source.replace("__PAYLOAD_STREAM__", json_stream)
+    components.html(html_source, height=750, scrolling=False)
+
+# --- 9. DYNAMIC HARDWARE FILE BINDING LAYER ---
+path_jig = os.path.join(TEMP_DIR, "jig.stl")
+
+link_b64s = []
+for i in range(7):
+    mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
+    target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", selected_profile, mesh_filename)
+    if not os.path.exists(target_mesh_path):
+        target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
+    link_b64s.append(get_file_base64_cached(target_mesh_path))
+
+tooling_b64 = ""
+if selected_tool_path and os.path.exists(selected_tool_path):
+    tooling_b64 = get_file_base64_cached(selected_tool_path, get_file_hash(selected_tool_path))
+
+scene_payload = {
+    "profileName": selected_profile,
+    "trajectory": st.session_state.program,
+    "initialAngles": st.session_state.j_angles,
+    "linkGeometries": link_b64s,
+    "fallbackHeights": active_cfg["fallback_heights"],
+    "dhConfig": active_cfg["links"],
+    "jointLimits": active_cfg["limits"],
+    "gunData": tooling_b64,
+    "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
+    "toolOffsetX": t_off_x,
+    "toolOffsetY": t_off_y,
+    "toolOffsetZ": t_off_z,
+    "toolRotX": float(t_rot_x) * (np.pi / 180.0),
+    "toolRotY": float(t_rot_y) * (np.pi / 180.0),
+    "toolRotZ": float(t_rot_z) * (np.pi / 180.0),
+    "jigX": jx_pos,
+    "jigY": jy_pos,
+    "jigZ": jz_pos,
+    "rotX": float(j_rot_x) * (np.pi / 180.0),
+    "rotY": float(j_rot_y) * (np.pi / 180.0),
+    "jigScale": js_scale
+}
+
+build_embedded_viewport(scene_payload)
