@@ -583,13 +583,10 @@ def build_embedded_viewport(payload):
             }
 
             function executeCyclicInverseKinematics(targetGlobalPos) {
-                // --- KINEMATIC ANCHOR CLAMPING LAYER ---
-                // If a physical wrist mesh is rendered, pull its actual global positioning vector
                 if (links[6]) {
                     let physicalWristPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
                     let deviationDistance = targetGlobalPos.distanceTo(physicalWristPos);
                     
-                    // Clamp threshold: Force target coordinates to stay within 0.1 meters (10cm) of Axis 6 
                     if (deviationDistance > 0.10) {
                         let allowedDirection = new THREE.Vector3().subVectors(targetGlobalPos, physicalWristPos).normalize();
                         targetGlobalPos.copy(physicalWristPos).add(allowedDirection.multiplyScalar(0.10));
@@ -852,6 +849,10 @@ def build_embedded_viewport(payload):
             let anchorTCPPos = new THREE.Vector3();
             let isPinchActive = false; 
             let lastPinchTime = 0;
+            
+            // --- TIME-BASED SETTLING LOCK VARIABLES ---
+            let isHandInsideBox = false;
+            let handEngagementStartTime = 0;
             let isHandEngaged = false; 
 
             const boxMinX = 0.33;
@@ -863,10 +864,14 @@ def build_embedded_viewport(payload):
                 arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
                 if (activeJogMode !== "gesture" || runSimulation) return;
 
+                // Configure box visual state colors
                 arCtx.lineWidth = 2;
                 if (isHandEngaged) {
                     arCtx.strokeStyle = "#4caf50"; 
                     arCtx.fillStyle = "rgba(76, 175, 80, 0.05)";
+                } else if (isHandInsideBox) {
+                    arCtx.strokeStyle = "#ffeb3b"; 
+                    arCtx.fillStyle = "rgba(255, 235, 59, 0.05)";
                 } else {
                     arCtx.strokeStyle = "#ff9800"; 
                     arCtx.fillStyle = "rgba(255, 152, 0, 0.03)";
@@ -886,23 +891,55 @@ def build_embedded_viewport(payload):
                     
                     const insideBox = (palmCenter.x >= boxMinX && palmCenter.x <= boxMaxX && palmCenter.y >= boxMinY && palmCenter.y <= boxMaxY);
 
+                    const currentTimeMillis = Date.now();
+
                     if (!isHandEngaged) {
                         if (insideBox) {
-                            isHandEngaged = true; 
-                            document.getElementById("ar-hud-text").innerHTML = "🟢 TRACKING ACTIVE: MOVE PALM";
-                            document.getElementById("ar-hud-text").style.color = "#4caf50";
+                            if (!isHandInsideBox) {
+                                // Hand just entered the box structure. Start the 2-second lock timer.
+                                isHandInsideBox = true;
+                                handEngagementStartTime = currentTimeMillis;
+                            }
+                            
+                            let secondsElapsed = (currentTimeMillis - handEngagementStartTime) / 1000;
+                            let remainingTime = Math.max(0, (2.0 - secondsElapsed)).toFixed(1);
+                            
+                            if (secondsElapsed >= 2.0) {
+                                // 2 seconds completed. Activate the inverse kinematics calculations.
+                                isHandEngaged = true; 
+                                document.getElementById("ar-hud-text").innerHTML = "🟢 TRACKING ACTIVE: MOVE PALM";
+                                document.getElementById("ar-hud-text").style.color = "#4caf50";
+                                
+                                // Snap anchor to physical position to start smoothly
+                                if (links[6]) {
+                                    let physicalWristPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                                    tcpAnchorPivot.position.copy(physicalWristPos);
+                                    window.lastRawHandPos = new THREE.Vector3().copy(physicalWristPos);
+                                }
+                            } else {
+                                document.getElementById("ar-hud-text").innerHTML = `⏳ INITIALIZING: HOLD STILL (${remainingTime}s)`;
+                                document.getElementById("ar-hud-text").style.color = "#ffeb3b";
+                                
+                                // Lock coordinate system to physical target during countdown
+                                if (links[6]) {
+                                    tcpAnchorPivot.position.copy(new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld));
+                                }
+                            }
                         } else {
+                            // Hand left box before countdown finished or hasn't entered
+                            isHandInsideBox = false;
                             document.getElementById("ar-hud-text").innerHTML = "⚠️ PLACE PALM INSIDE THE CENTER BOX";
                             document.getElementById("ar-hud-text").style.color = "#ff9800";
                             
                             if (links[6]) {
-                                tcpAnchorPivot.position.copy(links[6].position);
-                                tcpAnchorPivot.quaternion.copy(links[6].quaternion);
+                                tcpAnchorPivot.position.copy(new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld));
                             }
                         }
                     } else {
+                        // Tracking loop is fully engaged. Monitor exit boundary thresholds.
                         if (palmCenter.x < 0.05 || palmCenter.x > 0.95 || palmCenter.y < 0.05 || palmCenter.y > 0.95) {
                             isHandEngaged = false; 
+                            isHandInsideBox = false;
                         }
                     }
 
@@ -921,7 +958,8 @@ def build_embedded_viewport(payload):
                             window.lastRawHandPos.copy(anchorTCPPos);
                         }
 
-                        tcpAnchorPivot.position.lerp(window.lastRawHandPos, 0.15);
+                        // Apply interpolation smoothing
+                        tcpAnchorPivot.position.lerp(window.lastRawHandPos, 0.12);
                         executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
                         const p5 = handLandmarks[5];   
@@ -981,14 +1019,16 @@ def build_embedded_viewport(payload):
                         arCtx.beginPath(); arCtx.moveTo(screenX, screenY); arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7)); arCtx.stroke();
                     }
 
-                    arCtx.fillStyle = isHandEngaged ? (isPinchActive ? "#4caf50" : "#00ffcc") : "#ff9800";
+                    arCtx.fillStyle = isHandEngaged ? (isPinchActive ? "#4caf50" : "#00ffcc") : (isHandInsideBox ? "#ffeb3b" : "#ff9800");
                     arCtx.shadowColor = arCtx.fillStyle;
                     arCtx.shadowBlur = 10;
                     arCtx.beginPath(); arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI); arCtx.fill();
                     arCtx.shadowBlur = 0;
                 } else {
-                    if (isHandEngaged) {
+                    // Reset tracking locks if hands drop out completely
+                    if (isHandInsideBox || isHandEngaged) {
                         isHandEngaged = false;
+                        isHandInsideBox = false;
                         document.getElementById("ar-hud-text").innerHTML = "PLACE HAND INSIDE BOX TO ENGAGE";
                         document.getElementById("ar-hud-text").style.color = "#ff9800";
                     }
@@ -997,6 +1037,7 @@ def build_embedded_viewport(payload):
 
             function startWebcam() {
                 isHandEngaged = false;
+                isHandInsideBox = false;
                 if (!mpHands) {
                     mpHands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
                     mpHands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
@@ -1013,6 +1054,7 @@ def build_embedded_viewport(payload):
 
             function stopWebcam() { 
                 isHandEngaged = false;
+                isHandInsideBox = false;
                 if (mpCamera) { mpCamera.stop(); mpCamera = null; } 
             }
 
