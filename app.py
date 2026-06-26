@@ -279,7 +279,8 @@ if 'js_scale' not in locals(): js_scale = 0.001
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
-    html_source = """
+    # Using raw string literal r""" to prevent syntax/escaping issues across environments
+    html_source = r"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -428,4 +429,176 @@ def build_embedded_viewport(payload):
             
             const J_STEP = 5 * (Math.PI / 180);
 
-            THREE.Object3D.DefaultUp.set(0,
+            THREE.Object3D.DefaultUp.set(0, 0, 1);
+            const container = document.getElementById('canvas-container');
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111111);
+
+            const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 100);
+            camera.position.set(4.0, -4.0, 3.0);
+
+            const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(renderer.domElement);
+
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.target.set(0.8, 0, 0.8);
+
+            scene.add(new THREE.AmbientLight(0x777777));
+            const light1 = new THREE.DirectionalLight(0xffffff, 0.9); light1.position.set(5, 5, 10); scene.add(light1);
+            const light2 = new THREE.DirectionalLight(0xffffff, 0.4); light2.position.set(-5, -5, 5); scene.add(light2);
+
+            const grid = new THREE.GridHelper(15, 30, 0x555555, 0x252525);
+            grid.rotation.x = Math.PI / 2;
+            scene.add(grid);
+
+            const loader = new THREE.STLLoader();
+            const links = [];
+            
+            let gunMesh = new THREE.Group();
+            let jigMesh = new THREE.Group();
+            let internalJigContent = new THREE.Group();
+            
+            scene.add(gunMesh);
+            jigMesh.add(internalJigContent);
+            scene.add(jigMesh);
+
+            const tcpAnchorPivot = new THREE.Object3D();
+            scene.add(tcpAnchorPivot);
+
+            const transformGizmo = new THREE.TransformControls(camera, renderer.domElement);
+            transformGizmo.size = 0.65;
+            transformGizmo.setMode("translate");
+            transformGizmo.attach(tcpAnchorPivot);
+            transformGizmo.visible = false;
+            transformGizmo.enabled = false;
+            scene.add(transformGizmo);
+
+            transformGizmo.addEventListener('dragging-changed', function (e) {
+                controls.enabled = !e.value;
+            });
+
+            transformGizmo.addEventListener('objectChange', function () {
+                if ((activeJogMode !== "tcp" && activeJogMode !== "gesture") || runSimulation) return;
+                executeCyclicInverseKinematics(tcpAnchorPivot.position);
+            });
+
+            function base64ToArrayBuffer(base64Str) {
+                const binaryString = window.atob(base64Str);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
+                return bytes.buffer;
+            }
+
+            let targetColor = 0xcccccc; 
+            if (data.profileName === "Yaskawa_3500") { targetColor = 0x0055ff; } 
+            else if (data.profileName === "KUKA_KR150") { targetColor = 0xff6600; }
+
+            for(let i=0; i<7; i++) {
+                let mesh;
+                let currentLinkColor = (i === 0) ? 0x222222 : targetColor;
+
+                if(data.linkGeometries && data.linkGeometries[i] && data.linkGeometries[i].length > 0) {
+                    const geometry = loader.parse(base64ToArrayBuffer(data.linkGeometries[i]));
+                    const material = new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 });
+                    mesh = new THREE.Mesh(geometry, material);
+                } else {
+                    const h = data.fallbackHeights[i];
+                    const geometry = new THREE.CylinderGeometry(0.18, 0.22, h, 24);
+                    geometry.rotateX(Math.PI / 2); 
+                    if(i === 1 || i === 2 || i === 3) { geometry.translate(0, 0, h / 2); }
+                    mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 }));
+                }
+                scene.add(mesh);
+                links.push(mesh);
+            }
+
+            let toolAdjustmentGroup = new THREE.Group();
+            gunMesh.add(toolAdjustmentGroup);
+
+            if(data.gunData && data.gunData.length > 0) {
+                const geometry = loader.parse(base64ToArrayBuffer(data.gunData));
+                geometry.center(); 
+                const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
+                gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
+                toolAdjustmentGroup.add(gunInternalMesh);
+            }
+
+            if(data.jigData && data.jigData.length > 0) {
+                const geometry = loader.parse(base64ToArrayBuffer(data.jigData));
+                geometry.center(); 
+                const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.6 }));
+                m.scale.set(data.jigScale, data.jigScale, data.jigScale);
+                m.rotation.x = data.rotX;
+                m.rotation.y = data.rotY;
+                internalJigContent.add(m);
+            }
+
+            function getLinkStructureBaseMatrix(linkData) {
+                let mTrans = new THREE.Matrix4().makeTranslation(linkData.trans[0], linkData.trans[1], linkData.trans[2]);
+                let mOrient = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(linkData.orient[0], linkData.orient[1], linkData.orient[2], 'XYZ'));
+                return mTrans.multiply(mOrient);
+            }
+
+            function computeForwardKinematics(angles) {
+                const computedTransforms = [];
+                let currentMatrix = new THREE.Matrix4();
+                computedTransforms.push({ pos: new THREE.Vector3(0,0,0).toArray(), quat: new THREE.Quaternion().toArray() });
+
+                let m1 = getLinkStructureBaseMatrix(dh[0]).multiply(new THREE.Matrix4().makeRotationZ(angles[1]));
+                currentMatrix.multiply(m1);
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+
+                let m2 = getLinkStructureBaseMatrix(dh[1]).multiply(new THREE.Matrix4().makeRotationY(angles[2]));
+                currentMatrix.multiply(m2);
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+
+                let m2_adj = getLinkStructureBaseMatrix(dh[2]).multiply(new THREE.Matrix4().makeRotationY(angles[3]));
+                currentMatrix.multiply(m2_adj);
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+
+                let m4 = getLinkStructureBaseMatrix(dh[3]).multiply(new THREE.Matrix4().makeRotationX(angles[4]));
+                currentMatrix.multiply(m4);
+                
+                if (data.profileName === "Yaskawa_3500") {
+                    computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+                } else {
+                    let correctionMatrix = currentMatrix.clone();
+                    let directionVector = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(correctionMatrix));
+                    let fixedPos = new THREE.Vector3().setFromMatrixPosition(correctionMatrix).add(directionVector.multiplyScalar(-1.0));
+                    computedTransforms.push({ pos: fixedPos.toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+                }
+
+                let m5 = getLinkStructureBaseMatrix(dh[4]).multiply(new THREE.Matrix4().makeRotationY(angles[5]));
+                currentMatrix.multiply(m5);
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+
+                let m6 = getLinkStructureBaseMatrix(dh[5]);
+                if (data.profileName === "Yaskawa_3500") { m6.multiply(new THREE.Matrix4().makeRotationZ(angles[6])); }
+                else { m6.multiply(new THREE.Matrix4().makeRotationX(angles[6])); }
+                currentMatrix.multiply(m6);
+                computedTransforms.push({ pos: new THREE.Vector3().setFromMatrixPosition(currentMatrix).toArray(), quat: new THREE.Quaternion().setFromRotationMatrix(currentMatrix).toArray() });
+
+                return computedTransforms;
+            }
+
+            function executeCyclicInverseKinematics(targetGlobalPos) {
+                if (links[6]) {
+                    let physicalWristPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                    let deviationDistance = targetGlobalPos.distanceTo(physicalWristPos);
+                    
+                    if (deviationDistance > 0.10) {
+                        let allowedDirection = new THREE.Vector3().subVectors(targetGlobalPos, physicalWristPos).normalize();
+                        targetGlobalPos.copy(physicalWristPos).add(allowedDirection.multiplyScalar(0.10));
+                        tcpAnchorPivot.position.copy(targetGlobalPos);
+                    }
+                }
+
+                let maxReachRadius = 2.95; 
+                if (data.profileName === "ABB_4400") maxReachRadius = 1.95;
+                if (data.profileName === "Yaskawa_3500") maxReachRadius = 2.45;
+
+                let distanceFromBase = targetGlobalPos.length();
+                if (distanceFromBase > maxReachRadius) {
+                    targetGlobalPos.normalize().multiplyScalar(max
