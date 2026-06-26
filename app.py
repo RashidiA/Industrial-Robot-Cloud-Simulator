@@ -236,7 +236,7 @@ with st.sidebar:
                 "Welding Torches": "welding_torches"
             }
             selected_category = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()))
-            folder_target_name = CATEGORY_MAPPING[selected_category]
+            folder_target_name = CATEGAPPING[selected_category]
             library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", folder_target_name)
             
             available_tools = []
@@ -731,7 +731,7 @@ def build_embedded_viewport(payload):
             for(let i=1; i<=6; i++) {
                 const row = document.createElement('div');
                 row.className = 'jog-row';
-                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A${i}</div><div class="val-display" id="val-${i}">0.0°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
+                row.innerHTML = `<button class="jog-btn" id="btn-m-${i}">-</button><div class="jog-label">A{i}</div><div class="val-display" id="val-${i}">0.0°</div><button class="jog-btn" id="btn-p-${i}">+</button>`;
                 rowsContainer.appendChild(row);
                 (function(idx) {
                     document.getElementById(`btn-m-${idx}`).addEventListener('click', () => jogJoint(idx, -1));
@@ -850,10 +850,14 @@ def build_embedded_viewport(payload):
             let isPinchActive = false; 
             let lastPinchTime = 0;
             
-            // --- TIME-BASED SETTLING LOCK VARIABLES ---
+            // --- CALIBRATION AND TIMING LAYERS ---
             let isHandInsideBox = false;
             let handEngagementStartTime = 0;
             let isHandEngaged = false; 
+            
+            // Baseline capture positions
+            let handCalibrationBaseline = null; 
+            let robotCalibrationBaseline = null;
 
             const boxMinX = 0.33;
             const boxMaxX = 0.67;
@@ -864,7 +868,6 @@ def build_embedded_viewport(payload):
                 arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
                 if (activeJogMode !== "gesture" || runSimulation) return;
 
-                // Configure box visual state colors
                 arCtx.lineWidth = 2;
                 if (isHandEngaged) {
                     arCtx.strokeStyle = "#4caf50"; 
@@ -890,13 +893,17 @@ def build_embedded_viewport(payload):
                     const wrist = handLandmarks[0];
                     
                     const insideBox = (palmCenter.x >= boxMinX && palmCenter.x <= boxMaxX && palmCenter.y >= boxMinY && palmCenter.y <= boxMaxY);
-
                     const currentTimeMillis = Date.now();
+
+                    // Absolute coordinate calculation from raw camera readings
+                    let currentRawX = 0.8 + (1.0 - palmCenter.z) * 0.9;
+                    let currentRawY = -(palmCenter.x - 0.5) * 1.6;
+                    let currentRawZ = 0.3 + (1.0 - palmCenter.y) * 1.0;
+                    let rawHandVec = new THREE.Vector3(currentRawX, currentRawY, currentRawZ);
 
                     if (!isHandEngaged) {
                         if (insideBox) {
                             if (!isHandInsideBox) {
-                                // Hand just entered the box structure. Start the 2-second lock timer.
                                 isHandInsideBox = true;
                                 handEngagementStartTime = currentTimeMillis;
                             }
@@ -905,29 +912,28 @@ def build_embedded_viewport(payload):
                             let remainingTime = Math.max(0, (2.0 - secondsElapsed)).toFixed(1);
                             
                             if (secondsElapsed >= 2.0) {
-                                // 2 seconds completed. Activate the inverse kinematics calculations.
                                 isHandEngaged = true; 
                                 document.getElementById("ar-hud-text").innerHTML = "🟢 TRACKING ACTIVE: MOVE PALM";
                                 document.getElementById("ar-hud-text").style.color = "#4caf50";
                                 
-                                // Snap anchor to physical position to start smoothly
+                                // CAPTURE THE BASELINE OFFSET AT EXPIRE TIME
+                                handCalibrationBaseline = rawHandVec.clone();
                                 if (links[6]) {
-                                    let physicalWristPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
-                                    tcpAnchorPivot.position.copy(physicalWristPos);
-                                    window.lastRawHandPos = new THREE.Vector3().copy(physicalWristPos);
+                                    robotCalibrationBaseline = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                                    tcpAnchorPivot.position.copy(robotCalibrationBaseline);
                                 }
                             } else {
                                 document.getElementById("ar-hud-text").innerHTML = `⏳ INITIALIZING: HOLD STILL (${remainingTime}s)`;
                                 document.getElementById("ar-hud-text").style.color = "#ffeb3b";
                                 
-                                // Lock coordinate system to physical target during countdown
                                 if (links[6]) {
                                     tcpAnchorPivot.position.copy(new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld));
                                 }
                             }
                         } else {
-                            // Hand left box before countdown finished or hasn't entered
                             isHandInsideBox = false;
+                            handCalibrationBaseline = null;
+                            robotCalibrationBaseline = null;
                             document.getElementById("ar-hud-text").innerHTML = "⚠️ PLACE PALM INSIDE THE CENTER BOX";
                             document.getElementById("ar-hud-text").style.color = "#ff9800";
                             
@@ -936,30 +942,26 @@ def build_embedded_viewport(payload):
                             }
                         }
                     } else {
-                        // Tracking loop is fully engaged. Monitor exit boundary thresholds.
                         if (palmCenter.x < 0.05 || palmCenter.x > 0.95 || palmCenter.y < 0.05 || palmCenter.y > 0.95) {
                             isHandEngaged = false; 
                             isHandInsideBox = false;
+                            handCalibrationBaseline = null;
+                            robotCalibrationBaseline = null;
                         }
                     }
 
                     const screenX = palmCenter.x * arCanvas.width;
                     const screenY = palmCenter.y * arCanvas.height;
 
-                    if (isHandEngaged) {
-                        let targetZ = 0.3 + (1.0 - palmCenter.y) * 1.0; 
-                        let targetY = -(palmCenter.x - 0.5) * 1.6; 
-                        let targetX = 0.8 + (1.0 - palmCenter.z) * 0.9; 
+                    if (isHandEngaged && handCalibrationBaseline && robotCalibrationBaseline) {
+                        // Delta-Movement Calculation (Current Raw Position minus baseline start position)
+                        let deltaMove = new THREE.Vector3().subVectors(rawHandVec, handCalibrationBaseline);
 
-                        anchorTCPPos.set(targetX, targetY, targetZ);
+                        // Project delta adjustments onto the robot's existing position
+                        let calculatedTarget = new THREE.Vector3().addVectors(robotCalibrationBaseline, deltaMove);
                         
-                        if (!window.lastRawHandPos) { window.lastRawHandPos = new THREE.Vector3().copy(anchorTCPPos); }
-                        if (anchorTCPPos.distanceTo(window.lastRawHandPos) > 0.015) { 
-                            window.lastRawHandPos.copy(anchorTCPPos);
-                        }
-
-                        // Apply interpolation smoothing
-                        tcpAnchorPivot.position.lerp(window.lastRawHandPos, 0.12);
+                        // Apply smoothing to target vectors
+                        tcpAnchorPivot.position.lerp(calculatedTarget, 0.15);
                         executeCyclicInverseKinematics(tcpAnchorPivot.position);
 
                         const p5 = handLandmarks[5];   
@@ -1025,10 +1027,11 @@ def build_embedded_viewport(payload):
                     arCtx.beginPath(); arCtx.arc(screenX, screenY, 6, 0, 2 * Math.PI); arCtx.fill();
                     arCtx.shadowBlur = 0;
                 } else {
-                    // Reset tracking locks if hands drop out completely
                     if (isHandInsideBox || isHandEngaged) {
                         isHandEngaged = false;
                         isHandInsideBox = false;
+                        handCalibrationBaseline = null;
+                        robotCalibrationBaseline = null;
                         document.getElementById("ar-hud-text").innerHTML = "PLACE HAND INSIDE BOX TO ENGAGE";
                         document.getElementById("ar-hud-text").style.color = "#ff9800";
                     }
@@ -1038,6 +1041,8 @@ def build_embedded_viewport(payload):
             function startWebcam() {
                 isHandEngaged = false;
                 isHandInsideBox = false;
+                handCalibrationBaseline = null;
+                robotCalibrationBaseline = null;
                 if (!mpHands) {
                     mpHands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
                     mpHands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
@@ -1055,6 +1060,8 @@ def build_embedded_viewport(payload):
             function stopWebcam() { 
                 isHandEngaged = false;
                 isHandInsideBox = false;
+                handCalibrationBaseline = null;
+                robotCalibrationBaseline = null;
                 if (mpCamera) { mpCamera.stop(); mpCamera = null; } 
             }
 
