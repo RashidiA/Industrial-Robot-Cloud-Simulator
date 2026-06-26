@@ -583,6 +583,20 @@ def build_embedded_viewport(payload):
             }
 
             function executeCyclicInverseKinematics(targetGlobalPos) {
+                // --- KINEMATIC ANCHOR CLAMPING LAYER ---
+                // If a physical wrist mesh is rendered, pull its actual global positioning vector
+                if (links[6]) {
+                    let physicalWristPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                    let deviationDistance = targetGlobalPos.distanceTo(physicalWristPos);
+                    
+                    // Clamp threshold: Force target coordinates to stay within 0.1 meters (10cm) of Axis 6 
+                    if (deviationDistance > 0.10) {
+                        let allowedDirection = new THREE.Vector3().subVectors(targetGlobalPos, physicalWristPos).normalize();
+                        targetGlobalPos.copy(physicalWristPos).add(allowedDirection.multiplyScalar(0.10));
+                        tcpAnchorPivot.position.copy(targetGlobalPos);
+                    }
+                }
+
                 let maxReachRadius = 2.95; 
                 if (data.profileName === "ABB_4400") maxReachRadius = 1.95;
                 if (data.profileName === "Yaskawa_3500") maxReachRadius = 2.45;
@@ -613,10 +627,8 @@ def build_embedded_viewport(payload):
                         let angleScalarDot = componentToEE.dot(componentToTarget);
                         let localizedDeltaTheta = Math.acos(Math.max(-1, Math.min(1, angleScalarDot))) * 0.12;
                         
-                        // --- JOINT SENSITIVITY DAMPENING PRESETS & SINGULARITY BRAKES ---
                         if (j === 4) {
                             localizedDeltaTheta *= 0.15;
-                            // Singularity Brake: If Axis 5 is near dead straight (0), kill Axis 4 adjustments to stop drift spirals
                             if (Math.abs(localJointAngles[5]) < 0.10) {
                                 localizedDeltaTheta *= 0.05;
                             }
@@ -775,7 +787,6 @@ def build_embedded_viewport(payload):
 
             let simStepIndex = 0; let interpolationFraction = 0; let runSimulation = false;
 
-            // --- MAIN RENDERING ANIMATION ENGINE ---
             function animate() {
                 requestAnimationFrame(animate);
                 controls.update();
@@ -833,7 +844,6 @@ def build_embedded_viewport(payload):
                 renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // --- 8. HYBRID GESTURE PROCESSING ENGINE WITH SCALED COORD WORKSPACE ---
             let mpHands = null;
             let mpCamera = null;
             const arCanvas = document.getElementById("ar-overlay-canvas");
@@ -906,9 +916,7 @@ def build_embedded_viewport(payload):
 
                         anchorTCPPos.set(targetX, targetY, targetZ);
                         
-                        // --- 1. WEBCAM JITTER DEADZONE FILTER ---
                         if (!window.lastRawHandPos) { window.lastRawHandPos = new THREE.Vector3().copy(anchorTCPPos); }
-                        // If the hand moves less than 1.5 cm, completely skip position mutations (locks solver solid when holding still)
                         if (anchorTCPPos.distanceTo(window.lastRawHandPos) > 0.015) { 
                             window.lastRawHandPos.copy(anchorTCPPos);
                         }
