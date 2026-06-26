@@ -190,7 +190,6 @@ if "event" in query_params:
         st.session_state.program = []
         st.session_state.j_angles = [0.0] * 8
     elif event_type == "reset_joints":
-        # Keep external rotary axis E1 (index 7) but clear 6 robot joints (indices 0 to 6)
         st.session_state.j_angles = [0.0] * 7 + [st.session_state.j_angles[7]]
     st.query_params.clear()
 
@@ -588,6 +587,18 @@ def build_embedded_viewport(payload):
             }
 
             function executeCyclicInverseKinematics(targetGlobalPos) {
+                // Determine maximum safe physical reach boundary for the current robot profile config
+                let maxReachRadius = 2.95; 
+                if (data.profileName === "ABB_4400") maxReachRadius = 1.95;
+                if (data.profileName === "Yaskawa_3500") maxReachRadius = 2.45;
+
+                // Clamping the targeted position within safe spherical reach boundary to stop runaway unconstrained loops
+                let distanceFromBase = targetGlobalPos.length();
+                if (distanceFromBase > maxReachRadius) {
+                    targetGlobalPos.normalize().multiplyScalar(maxReachRadius);
+                    tcpAnchorPivot.position.copy(targetGlobalPos);
+                }
+
                 for (let iteration = 0; iteration < 12; iteration++) {
                     let currentTransforms = computeForwardKinematics(localJointAngles);
                     let endEffectorPos = new THREE.Vector3().fromArray(currentTransforms[6].pos);
@@ -619,7 +630,7 @@ def build_embedded_viewport(payload):
                         }
                     }
                 }
-                refreshSceneDisplay(false);
+                refreshSceneDisplay(false); // Update meshes but bypass gizmo snap during IK drag loop
                 updateMonitorHUDText(targetGlobalPos);
             }
 
@@ -636,6 +647,7 @@ def build_embedded_viewport(payload):
                     gunMesh.translateX(data.toolOffsetX); gunMesh.translateY(data.toolOffsetY); gunMesh.translateZ(data.toolOffsetZ);
                     toolAdjustmentGroup.rotation.set(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ');
 
+                    // FIX: Snap the interactive 3-axis gizmo directly onto Axis 6 face during manual joint jogs
                     if (updateGizmoPosition || runSimulation) {
                         tcpAnchorPivot.position.copy(links[6].position);
                         tcpAnchorPivot.quaternion.copy(links[6].quaternion);
@@ -684,13 +696,15 @@ def build_embedded_viewport(payload):
                 rowsWrap.style.display = "block"; hudMonitor.style.display = "none"; arContainer.style.display = "none";
                 transformGizmo.visible = false; transformGizmo.enabled = false;
                 stopWebcam();
+                refreshSceneDisplay(true); // Re-align axis controls instantly on return
             });
 
             btnTCP.addEventListener("click", () => {
                 activeJogMode = "tcp"; 
                 btnTCP.classList.add("active"); btnJoint.classList.remove("active"); btnGesture.classList.remove("active");
                 rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "none";
-                transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
+                transformGizmo.visible = true; transformGizmo.enabled = true; 
+                refreshSceneDisplay(true); // Lock tracking straight to A6 flange 
                 stopWebcam();
             });
 
@@ -698,7 +712,8 @@ def build_embedded_viewport(payload):
                 activeJogMode = "gesture";
                 btnGesture.classList.add("active"); btnJoint.classList.remove("active"); btnTCP.classList.remove("active");
                 rowsWrap.style.display = "none"; hudMonitor.style.display = "block"; arContainer.style.display = "block";
-                transformGizmo.visible = true; transformGizmo.enabled = true; refreshSceneDisplay(true);
+                transformGizmo.visible = true; transformGizmo.enabled = true; 
+                refreshSceneDisplay(true);
                 startWebcam();
             });
 
@@ -726,20 +741,15 @@ def build_embedded_viewport(payload):
                 let nextAngle = localJointAngles[jointIdx] + (direction * J_STEP);
                 if (nextAngle >= limitsConfig[jointIdx-1][0] && nextAngle <= limitsConfig[jointIdx-1][1]) {
                     localJointAngles[jointIdx] = nextAngle;
-                    refreshSceneDisplay(true);
+                    refreshSceneDisplay(true); // Keeps gizmo rigidly attached to 6th flange
                 }
             }
 
-            // --- JAVASCRIPT EVENT ACTION TRIGGER FOR RESET BUTTON ---
             document.getElementById('btn-reset-pos').addEventListener('click', () => {
                 if(runSimulation) return;
-                // Reset joints 1 through 6 back to 0
-                for(let i = 1; i <= 6; i++) {
-                    localJointAngles[i] = 0.0;
-                }
+                for(let i = 1; i <= 6; i++) { localJointAngles[i] = 0.0; }
                 refreshSceneDisplay(true);
                 
-                // Route message back up to Streamlit via clean URL Parameter hook
                 const targetUrl = new URL(window.parent.location.href);
                 targetUrl.searchParams.set("event", "reset_joints");
                 window.parent.location.href = targetUrl.toString();
@@ -809,6 +819,7 @@ def build_embedded_viewport(payload):
                     gunMesh.translateX(ox); gunMesh.translateY(oy); gunMesh.translateZ(oz);
                     toolAdjustmentGroup.rotation.set(rx, ry, rz, 'XYZ');
                     
+                    // FIX: Ensure the interactive anchor matrix maintains a continuous 1:1 match with 6th axis position inside the render cycle
                     tcpAnchorPivot.position.copy(links[6].position);
                     tcpAnchorPivot.quaternion.copy(links[6].quaternion);
                     transformGizmo.updateMatrixWorld();
@@ -837,7 +848,6 @@ def build_embedded_viewport(payload):
                 
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const handLandmarks = results.multiHandLandmarks[0];
-                    
                     const palmCenter = handLandmarks[9];
                     const wrist = handLandmarks[0];
                     
@@ -853,9 +863,7 @@ def build_embedded_viewport(payload):
                     const p17 = handLandmarks[17]; 
                     let currentRoll = Math.atan2(p17.y - p5.y, p17.x - p5.x);
                     
-                    if (window.lastHandRoll === undefined) {
-                        window.lastHandRoll = currentRoll;
-                    }
+                    if (window.lastHandRoll === undefined) { window.lastHandRoll = currentRoll; }
                     let deltaRoll = currentRoll - window.lastHandRoll;
                     if (deltaRoll > Math.PI) deltaRoll -= 2 * Math.PI;
                     if (deltaRoll < -Math.PI) deltaRoll += 2 * Math.PI;
@@ -868,7 +876,6 @@ def build_embedded_viewport(payload):
 
                     const thumbTip = handLandmarks[4];
                     const indexTip = handLandmarks[8];
-                    
                     let dx = thumbTip.x - indexTip.x;
                     let dy = thumbTip.y - indexTip.y;
                     let dz = thumbTip.z - indexTip.z;
@@ -881,11 +888,8 @@ def build_embedded_viewport(payload):
                                 isPinchActive = true;
                                 lastPinchTime = currentTime;
                                 triggerManualStepRecord();
-                                
                                 document.getElementById('status').style.background = "rgba(76, 175, 80, 0.95)";
-                                setTimeout(() => {
-                                    document.getElementById('status').style.background = "rgba(20,20,20,0.8)";
-                                }, 400);
+                                setTimeout(() => { document.getElementById('status').style.background = "rgba(20,20,20,0.8)"; }, 400);
                             }
                         }
                     } else {
@@ -905,71 +909,40 @@ def build_embedded_viewport(payload):
                     const uY = dirY / (distance || 1);
                     const nX = -uY;
                     const nY = uX;
-
                     const arrowLength = Math.max(30, distance * 0.7);
 
                     arCtx.lineWidth = 4;
                     arCtx.lineCap = "round";
-
                     arCtx.strokeStyle = "#2196f3";
-                    arCtx.beginPath();
-                    arCtx.moveTo(screenX, screenY);
-                    arCtx.lineTo(screenX + uX * arrowLength, screenY + uY * arrowLength);
-                    arCtx.stroke();
+                    arCtx.beginPath(); arCtx.moveTo(screenX, screenY); arCtx.lineTo(screenX + uX * arrowLength, screenY + uY * arrowLength); arCtx.stroke();
 
                     arCtx.strokeStyle = "#f44336";
-                    arCtx.beginPath();
-                    arCtx.moveTo(screenX, screenY);
-                    arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7));
-                    arCtx.stroke();
+                    arCtx.beginPath(); arCtx.moveTo(screenX, screenY); arCtx.lineTo(screenX + nX * (arrowLength * 0.7), screenY + nY * (arrowLength * 0.7)); arCtx.stroke();
 
                     arCtx.fillStyle = isPinchActive ? "#4caf50" : "#00ffcc";
                     arCtx.shadowColor = isPinchActive ? "#4caf50" : "#00ffcc";
                     arCtx.shadowBlur = isPinchActive ? 18 : 10;
-                    arCtx.beginPath();
-                    arCtx.arc(screenX, screenY, isPinchActive ? 8 : 6, 0, 2 * Math.PI);
-                    arCtx.fill();
-                    
+                    arCtx.beginPath(); arCtx.arc(screenX, screenY, isPinchActive ? 8 : 6, 0, 2 * Math.PI); arCtx.fill();
                     arCtx.shadowBlur = 0;
                 }
             }
 
             function startWebcam() {
                 if (!mpHands) {
-                    mpHands = new Hands({
-                        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-                    });
-                    mpHands.setOptions({
-                        maxNumHands: 1,
-                        modelComplexity: 1,
-                        minDetectionConfidence: 0.6,
-                        minTrackingConfidence: 0.6
-                    });
+                    mpHands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+                    mpHands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
                     mpHands.onResults(onHandResults);
                 }
-
                 if (!mpCamera) {
                     mpCamera = new Camera(videoElement, {
-                        onFrame: async () => {
-                            if (activeJogMode === "gesture") {
-                                await mpHands.send({ image: videoElement });
-                            }
-                        },
-                        width: 320,
-                        height: 240
+                        onFrame: async () => { if (activeJogMode === "gesture") { await mpHands.send({ image: videoElement }); } },
+                        width: 320, height: 240
                     });
                 }
-                mpCamera.start().catch(err => {
-                    alert("Camera access denied or unavailable: " + err);
-                });
+                mpCamera.start().catch(err => { alert("Camera access denied or unavailable: " + err); });
             }
 
-            function stopWebcam() {
-                if (mpCamera) {
-                    mpCamera.stop();
-                    mpCamera = null;
-                }
-            }
+            function stopWebcam() { if (mpCamera) { mpCamera.stop(); mpCamera = null; } }
 
             refreshSceneDisplay(true); updateUIElements(); animate();
         </script>
