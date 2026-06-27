@@ -1,4 +1,4 @@
-# 📟 Industrial Robot Cloud Simulator & OLP Platform
+# 📟 Cloud-Based Industrial Robot Simulator with AI Vision Hand-Gesture Interface
 [![Release](https://img.shields.io/badge/Release-v1.0.1-orange.svg)](https://github.com/RashidiA/Industrial-Robot-Cloud-Simulator)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![Framework](https://img.shields.io/badge/UI-Streamlit-FF4B4B.svg)](https://streamlit.io/)
