@@ -386,7 +386,7 @@ def build_embedded_viewport(payload):
     </div>
 
     <div id="jog-pendant">
-        <div class="pendant-title">⚡ HYBRID ULTIMATE PENDANT</div>
+        <div class="pendant-title">⚡ PROGRAMMING PENDANT</div>
         <div class="mode-container">
             <button id="mode-joint" class="mode-btn active">Joint</button>
             <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
