@@ -231,23 +231,28 @@ with st.sidebar:
 
         if tool_source == "Internal Library":
             CATEGORY_MAPPING = {
+                "Nil": None,
                 "Welding Guns": "welding_guns",
                 "Grippers": "grippers",
                 "Welding Torches": "welding_torches"
             }
             selected_category = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()))
-            folder_target_name = CATEGORY_MAPPING[selected_category]
-            library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", folder_target_name)
             
-            available_tools = []
-            if os.path.exists(library_scan_path):
-                available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
-                
-            if available_tools:
-                selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
-                selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
+            if selected_category == "Nil":
+                selected_tool_path = None
             else:
-                st.caption("⚠️ No internal library templates found. Please upload an external file.")
+                folder_target_name = CATEGORY_MAPPING[selected_category]
+                library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", folder_target_name)
+                
+                available_tools = []
+                if os.path.exists(library_scan_path):
+                    available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
+                    
+                if available_tools:
+                    selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
+                    selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
+                else:
+                    st.caption("⚠️ No internal library templates found. Please upload an external file.")
         else:
             up_gun = st.file_uploader("Upload Custom External Tool STL", type=["stl"], key="gun_up")
             if up_gun:
@@ -279,7 +284,6 @@ if 'js_scale' not in locals(): js_scale = 0.001
 def build_embedded_viewport(payload):
     json_stream = json.dumps(payload)
     
-    # We escape any internal quote issues by ensuring this raw string remains cleanly defined
     html_source = r"""<!DOCTYPE html>
 <html>
 <head>
@@ -1061,7 +1065,6 @@ def build_embedded_viewport(payload):
 </body>
 </html>"""
     
-    # Safely swap out variables without escaping problems breaking your Python interpreter layout
     html_source = html_source.replace("__PAYLOAD_STREAM__", json_stream)
     components.html(html_source, height=750, scrolling=False)
 
