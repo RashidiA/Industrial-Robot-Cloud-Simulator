@@ -4,7 +4,9 @@
 [![Framework](https://img.shields.io/badge/UI-Streamlit-FF4B4B.svg)](https://streamlit.io/)
 [![Engine](https://img.shields.io/badge/Graphics-WebGL%20%2F%20Three.js-000000.svg)](https://threejs.org/)
 
-An advanced, cloud-native Industrial Robot Offline Programming (OLP) simulator engineered for automotive manufacturing contexts (such as robotic resistance spot welding and material handling assembly lines). The application features multi-robot hardware registry, forward/inverse kinematics handling, tooling calibration matrices, and a cutting-edge, client-side **MediaPipe AI gesture tracking system** for real-time camera-driven teleoperation.
+An advanced, cloud-native Industrial Robot Offline Programming (OLP) simulator engineered for automotive manufacturing contexts (such as robotic resistance spot welding and material handling assembly lines). The application features multi-robot hardware registry, forward/inverse kinematics handling, tooling calibration matrices, and a cutting-edge, client-side **MediaPipe AI gesture tracking system** for real-time camera-driven teleoperation.  
+
+  Simulator access link : https://industrial-robot-cloud-simulator-54jggbftztagnuxosqtvzr.streamlit.app/
 
 ---
 
