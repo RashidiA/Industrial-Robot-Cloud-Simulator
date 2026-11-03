@@ -4,11 +4,19 @@ import numpy as np
 import os
 import json
 import base64
-from ikpy.chain import Chain
-from ikpy.link import OriginLink, URDFLink
+try:
+    from ikpy.chain import Chain
+    from ikpy.link import OriginLink, URDFLink
+except ImportError:      # ikpy is optional: the browser does the real IK now
+    Chain = None
 
 # --- 1. SYSTEM INITIALIZATION ---
-st.set_page_config(page_title="Multi-Robot OLP Pro-Simulator", layout="wide")
+st.set_page_config(page_title="Industrial Robot Cloud Simulator", page_icon="🤖", layout="wide")
+st.markdown("""<style>
+.block-container{padding-top:.6rem;padding-bottom:0;max-width:100%}
+header[data-testid=stHeader]{background:transparent}
+iframe{border-radius:10px;border:1px solid #262b35}
+</style>""", unsafe_allow_html=True)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
@@ -157,7 +165,7 @@ def build_robot_chain(profile_name, hardware_config):
         URDFLink(name=links_data[5]["name"], origin_translation=links_data[5]["trans"], origin_orientation=links_data[5]["orient"], rotation=hardware_config["links"][5]["rot"]),
     ], active_links_mask=[False, True, True, True, True, True, True])
 
-robot_chain = build_robot_chain(selected_profile, active_cfg)
+robot_chain = build_robot_chain(selected_profile, active_cfg) if Chain is not None else None
 
 @st.cache_data(show_spinner=False)
 def get_file_base64_cached(filepath, file_hash=""):
@@ -288,135 +296,214 @@ def build_embedded_viewport(payload):
 <html>
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
-    
+
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
-        body { margin: 0; background-color: #111111; overflow: hidden; font-family: sans-serif; user-select: none; }
-        #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index:1; }
-        #status { position: absolute; top: 10px; left: 10px; color: #ffffff; font-size: 13px; background: rgba(20,20,20,0.8); padding: 6px 12px; border-radius:4px; border: 1px solid #333; z-index: 10; }
-        #jog-pendant { position: absolute; top: 10px; right: 10px; background: rgba(20, 20, 20, 0.85); border: 1px solid #ff9800; border-radius: 6px; width: 220px; padding: 10px; color: white; z-index: 10; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        .pendant-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #ff9800; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; text-align: center; }
-        
-        .mode-container { display: flex; gap: 4px; margin-bottom: 8px; }
-        .mode-btn { flex: 1; background: #222; border: 1px solid #444; color: #aaa; padding: 5px; font-size: 10px; font-weight: bold; cursor: pointer; border-radius: 4px; text-transform: uppercase; }
-        .mode-btn.active { background: #ff9800; color: black; border-color: #ff9800; }
-        
-        .jog-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-        .jog-label { font-size: 12px; font-weight: bold; font-family: monospace; color: #bbb; }
-        .jog-btn { background: #222; border: 1px solid #444; color: white; width: 45px; height: 26px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; transition: all 0.1s; }
-        .jog-btn:active { background: #ff9800; color: black; border-color: #ff9800; }
-        .val-display { font-family: monospace; font-size: 11px; color: #00ffcc; width: 60px; text-align: center; }
-        .action-block { margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-        .btn-action { width: 100%; border: none; font-weight: bold; height: 32px; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: background 0.1s; }
-        #btn-save-step { background: #ff9800; color: black; }
-        #btn-run-sim { background: #4caf50; color: white; }
-        #btn-clear-seq { background: #f44336; color: white; }
-        #btn-reset-pos { background: #3f51b5; color: white; margin-bottom: 4px; border: 1px solid #5c6bc0; }
-        #btn-reset-pos:active { background: #283593; }
-        .step-counter { font-size: 12px; font-family: monospace; text-align: center; color: #aaa; margin-top: 2px; }
-        
-        #tcp-monitor { background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-size: 11px; font-family: monospace; margin-bottom: 8px; display: none; }
-        .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: bold; }
-        
-        .ar-viewport-container {
-            position: absolute;
-            bottom: 15px;
-            left: 15px;
-            width: 320px;
-            height: 240px;
-            border: 2px solid #ff9800;
-            border-radius: 6px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-            z-index: 10;
-            display: none;
-            overflow: hidden;
-            transform: scaleX(-1);
-        }
-        #webcam-feedback {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            position: absolute;
-            top: 0;
-            left: 0;
-            z-index: 11;
-        }
-        #ar-overlay-canvas {
-            width: 100%;
-            height: 100%;
-            position: absolute;
-            top: 0;
-            left: 0;
-            z-index: 12;
-            pointer-events: none;
-        }
-        
-        .ar-gesture-remarks-hud {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            border-bottom: 1px solid #ff9800;
-            color: #ffffff;
-            font-size: 11px;
-            text-align: center;
-            padding: 5px 0;
-            font-family: 'Segoe UI', sans-serif;
-            font-weight: 500;
-            letter-spacing: 0.5px;
-            z-index: 20;
-            transform: scaleX(-1);
+        :root { --bg:#0d0f13; --panel:#14171d; --panel2:#1a1e26; --line:#262b35; --txt:#e6e9ef; --mut:#8a93a3; --acc:#ff9800; --ok:#4caf50; --bad:#f44336; --cy:#00ffcc; }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { margin: 0; background: var(--bg); color: var(--txt); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; user-select: none; overflow: hidden; display: grid; grid-template-rows: 40px 1fr 26px; }
+        button { font-family: inherit; }
+        /* ---------- top bar ---------- */
+        #topbar { display: flex; align-items: center; gap: 14px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+        .brand { font-weight: 800; letter-spacing: .5px; color: var(--acc); white-space: nowrap; }
+        .brand small { color: var(--mut); font-weight: 500; margin-left: 6px; }
+        .tb-sp { flex: 1; }
+        .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; color: var(--mut); font-size: 11px; white-space: nowrap; }
+        .chip b { color: var(--txt); font-weight: 600; }
+        .tbtn { background: var(--panel2); border: 1px solid var(--line); color: var(--txt); border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+        .tbtn:hover { border-color: var(--acc); }
+        /* ---------- main grid ---------- */
+        #main { display: grid; grid-template-columns: 210px minmax(0, 1fr) 340px; min-height: 0; }
+        #tree { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 10px 8px; }
+        #side { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+        .h { font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--mut); margin: 12px 6px 6px; }
+        .h:first-child { margin-top: 2px; }
+        .node { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; color: var(--txt); cursor: default; }
+        .node:hover { background: var(--panel2); }
+        .node .nm { flex: 1; }
+        .eye { cursor: pointer; opacity: .9; font-size: 14px; }
+        .eye.off { opacity: .25; }
+        .infobox { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; line-height: 1.7; margin: 0 2px; }
+        .infobox span { color: var(--mut); display: inline-block; width: 52px; }
+        .note { color: var(--mut); font-size: 11px; line-height: 1.5; margin: 10px 6px; }
+        /* ---------- viewport ---------- */
+        #view { position: relative; min-width: 0; min-height: 0; background: radial-gradient(ellipse at 50% 30%, #1b2029 0%, #0d0f13 70%); }
+        #canvas-container { position: absolute; inset: 0; z-index: 1; }
+        #viewbtns { position: absolute; top: 10px; left: 10px; z-index: 10; display: flex; gap: 6px; flex-wrap: wrap; }
+        #status { position: absolute; top: 10px; right: 10px; z-index: 10; color: #fff; font-size: 12px; background: rgba(20,22,28,.85); padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); transition: background .2s; }
+        #toast { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 30; background: rgba(20,22,28,.95); border: 1px solid var(--acc); color: #fff; padding: 8px 14px; border-radius: 8px; display: none; max-width: 80%; text-align: center; }
+        #warn { position: absolute; left: 10px; bottom: 12px; z-index: 10; display: flex; gap: 6px; flex-wrap: wrap; }
+        .pill { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid #2f6b34; color: #7fd884; background: rgba(76,175,80,.08); }
+        .pill.bad { border-color: #8a2a24; color: #ff8a80; background: rgba(244,67,54,.1); }
+        /* ---------- side panel tabs ---------- */
+        #tabs { display: flex; border-bottom: 1px solid var(--line); }
+        .tab { flex: 1; text-align: center; padding: 10px 4px; color: var(--mut); cursor: pointer; border-bottom: 2px solid transparent; font-weight: 600; }
+        .tab.active { color: var(--acc); border-bottom-color: var(--acc); }
+        .pane { display: none; padding: 12px; overflow-y: auto; flex: 1; min-height: 0; }
+        .pane.active { display: block; }
+        .mode-container { display: flex; gap: 4px; margin-bottom: 10px; }
+        .mode-btn { flex: 1; background: var(--panel2); border: 1px solid var(--line); color: var(--mut); padding: 8px 4px; font-size: 11px; font-weight: 700; cursor: pointer; border-radius: 6px; text-transform: uppercase; }
+        .mode-btn.active { background: var(--acc); color: #000; border-color: var(--acc); }
+        .jog-row { display: grid; grid-template-columns: 30px 28px minmax(0,1fr) 28px 58px; align-items: center; gap: 6px; margin-bottom: 8px; }
+        .jog-label { font-size: 12px; font-weight: 800; font-family: Consolas, monospace; color: #6fb3ff; }
+        .jog-btn { background: var(--panel2); border: 1px solid var(--line); color: #fff; height: 26px; font-size: 15px; font-weight: 700; cursor: pointer; border-radius: 5px; padding: 0; }
+        .jog-btn:active { background: var(--acc); color: #000; border-color: var(--acc); }
+        .val-display { font-family: Consolas, monospace; font-size: 12px; color: var(--cy); text-align: right; }
+        .val-display.near { color: var(--bad); }
+        input[type=range] { width: 100%; accent-color: var(--acc); margin: 0; }
+        .e1sep { border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 4px; }
+        #tcp-monitor { background: rgba(0,0,0,.35); border: 1px solid var(--line); padding: 8px; border-radius: 8px; font-family: Consolas, monospace; margin-bottom: 8px; display: none; }
+        .tcp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: 4px; font-weight: 700; }
+        .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+        .row label { color: var(--mut); font-size: 11px; }
+        select { background: var(--panel2); color: var(--txt); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; }
+        .action-block { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 7px; }
+        .btn-action { width: 100%; border: none; font-weight: 700; height: 34px; border-radius: 6px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+        #btn-save-step { background: var(--acc); color: #000; }
+        #btn-run-sim { background: var(--ok); color: #fff; }
+        #btn-run-sim.stop { background: #c62828; }
+        #btn-clear-seq { background: #3a2220; color: #ff8a80; border: 1px solid #5a2e2a; }
+        #btn-reset-pos { background: #2b3358; color: #cfd6ff; border: 1px solid #3f4a86; }
+        .step-counter { font-size: 12px; font-family: Consolas, monospace; text-align: center; color: var(--mut); }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--mut); padding: 4px 4px; border-bottom: 1px solid var(--line); }
+        td { padding: 6px 4px; border-bottom: 1px solid #1d222b; font-family: Consolas, monospace; font-size: 11px; }
+        tr.cur td { background: rgba(255,152,0,.15); }
+        .mini { background: var(--panel2); border: 1px solid var(--line); color: #fff; border-radius: 4px; cursor: pointer; padding: 1px 6px; font-size: 11px; }
+        .learn h4 { margin: 14px 0 4px; color: var(--acc); font-size: 12px; }
+        .learn p { margin: 0 0 6px; color: #c3c9d4; line-height: 1.55; }
+        /* ---------- status bar ---------- */
+        #statusbar { display: flex; gap: 14px; align-items: center; padding: 0 12px; background: #0a0c10; border-top: 1px solid var(--line); font-family: Consolas, monospace; font-size: 11px; color: var(--mut); white-space: nowrap; overflow: hidden; }
+        #statusbar b { color: var(--cy); font-weight: 600; }
+        body.running #side .pane, body.running #tree { opacity: .45; pointer-events: none; }
+        body.running #btn-run-sim { pointer-events: auto; opacity: 1; }
+        /* ---------- gesture camera ---------- */
+        .ar-viewport-container { position: absolute; bottom: 44px; left: 12px; width: 320px; height: 240px; border: 2px solid var(--acc); border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,.6); z-index: 12; display: none; overflow: hidden; transform: scaleX(-1); }
+        #webcam-feedback { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; z-index: 11; }
+        #ar-overlay-canvas { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 12; pointer-events: none; }
+        .ar-gesture-remarks-hud { position: absolute; top: 0; left: 0; width: 100%; background: rgba(0,0,0,.8); border-bottom: 1px solid var(--acc); color: #fff; font-size: 11px; text-align: center; padding: 5px 0; font-weight: 500; letter-spacing: .5px; z-index: 20; transform: scaleX(-1); }
+        /* ---------- phone / small screens ---------- */
+        @media (max-width: 900px) {
+            body { grid-template-rows: 40px 1fr 24px; }
+            #main { grid-template-columns: 1fr; grid-template-rows: minmax(0, 46%) minmax(0, 54%); }
+            #tree { display: none; }
+            #side { border-left: 0; border-top: 1px solid var(--line); }
+            .chip, .brand small { display: none; }
+            .tbtn { white-space: nowrap; padding: 4px 8px; }
+            #viewbtns { max-width: 60%; }
+            .ar-viewport-container { width: 200px; height: 150px; bottom: 10px; }
+            #statusbar span:nth-child(n+4) { display: none; }
         }
     </style>
 </head>
 <body>
-    <div id="status">WebGL Processing...</div>
-    
-    <div class="ar-viewport-container" id="ar-viewport">
-        <div class="ar-gesture-remarks-hud" id="ar-hud-text">PLACE HAND INSIDE BOX TO ENGAGE</div>
-        <video id="webcam-feedback" autoplay playsinline></video>
-        <canvas id="ar-overlay-canvas" width="320" height="240"></canvas>
+    <div id="topbar">
+        <div class="brand">ROBOT OLP<small>Offline Programming Studio</small></div>
+        <span class="chip">Robot <b id="chip-robot">-</b></span>
+        <span class="chip">Mode <b id="chip-mode">Joint</b></span>
+        <div class="tb-sp"></div>
+        <button class="tbtn" id="btn-export" title="Download the recorded program as a text file">⬇ Export program</button>
+        <button class="tbtn" id="btn-help" title="Keyboard shortcuts">? Help</button>
     </div>
 
-    <div id="jog-pendant">
-        <div class="pendant-title">⚡ PROGRAMMING PENDANT</div>
-        <div class="mode-container">
-            <button id="mode-joint" class="mode-btn active">Joint</button>
-            <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
-            <button id="mode-gesture" class="mode-btn">✋ Gesture</button>
+    <div id="main">
+        <div id="tree">
+            <div class="h">Station</div>
+            <div class="node"><span>🦾</span><span class="nm">Robot</span><span class="eye" data-vis="robot">👁</span></div>
+            <div class="node"><span>🔧</span><span class="nm">Tool</span><span class="eye" data-vis="tool">👁</span></div>
+            <div class="node"><span>⚙</span><span class="nm">Jig / positioner</span><span class="eye" data-vis="jig">👁</span></div>
+            <div class="node"><span>▦</span><span class="nm">Floor grid</span><span class="eye" data-vis="grid">👁</span></div>
+            <div class="h">Selected robot</div>
+            <div class="infobox">
+                <div><span>Model</span><b id="inf-model">-</b></div>
+                <div><span>Axes</span>6 + E1 positioner</div>
+                <div><span>Reach</span>~<b id="inf-reach">-</b> m</div>
+            </div>
+            <div class="h">Program</div>
+            <div class="node" id="node-prog"><span>▶</span><span class="nm">Main program</span><span id="inf-steps" class="chip">0</span></div>
+            <div class="note">Educational models. Link shapes come from your CAD files; use for learning, not for cell sign-off.</div>
         </div>
-        <div id="tcp-monitor">
-            <div style="color: #00ffcc; font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
-            <div class="tcp-grid">
-                <span style="color:#ff4444">X:<span id="lbl-tx">0.00</span></span>
-                <span style="color:#44ff44">Y:<span id="lbl-ty">0.00</span></span>
-                <span style="color:#4444ff">Z:<span id="lbl-tz">0.00</span></span>
+
+        <div id="view">
+            <div id="canvas-container"></div>
+            <div id="viewbtns">
+                <button class="tbtn" data-view="iso">Iso</button><button class="tbtn" data-view="front">Front</button><button class="tbtn" data-view="side">Side</button><button class="tbtn" data-view="top">Top</button><button class="tbtn" data-view="fit">Fit</button>
+            </div>
+            <div id="status">WebGL Processing...</div>
+            <div id="warn"><span class="pill" id="pill-lim">Joint limits OK</span><span class="pill" id="pill-reach">Within reach</span></div>
+            <div id="toast"></div>
+            <div class="ar-viewport-container" id="ar-viewport">
+                <div class="ar-gesture-remarks-hud" id="ar-hud-text">PLACE HAND INSIDE BOX TO ENGAGE</div>
+                <video id="webcam-feedback" autoplay playsinline></video>
+                <canvas id="ar-overlay-canvas" width="320" height="240"></canvas>
             </div>
         </div>
-        <div id="joint-jog-container"></div>
-        <div class="action-block">
-            <button class="btn-action" id="btn-reset-pos">🔄 RESET JOINT POSITIONS (0°)</button>
-            
-            <div class="jog-row" style="margin-bottom: 4px;">
-                <div class="jog-label" style="font-size: 11px; color: #aaa;">SPEED</div>
-                <input type="range" id="sld-speed" min="5" max="100" value="50" step="5" style="flex-grow: 1; margin: 0 10px; accent-color: #ff9800;">
-                <div class="val-display" id="val-speed" style="width: 35px; color: #ff9800; font-weight: bold;">50%</div>
+
+        <div id="side">
+            <div id="tabs"><div class="tab active" data-tab="jog">Jog</div><div class="tab" data-tab="prog">Program</div><div class="tab" data-tab="learn">Learn</div></div>
+
+            <div class="pane active" id="pane-jog">
+              <div id="jog-pendant">
+                <div class="mode-container">
+                    <button id="mode-joint" class="mode-btn active">Joint</button>
+                    <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
+                    <button id="mode-gesture" class="mode-btn">✋ Gesture</button>
+                </div>
+                <div id="tcp-monitor">
+                    <div style="color: var(--cy); font-size: 10px; text-align:center;">TCP LIVE MONITOR (METERS)</div>
+                    <div class="tcp-grid">
+                        <span style="color:#ff6b6b">X:<span id="lbl-tx">0.00</span></span>
+                        <span style="color:#6bff6b">Y:<span id="lbl-ty">0.00</span></span>
+                        <span style="color:#6b8bff">Z:<span id="lbl-tz">0.00</span></span>
+                    </div>
+                    <div style="color:var(--mut);font-size:10px;text-align:center;margin-top:6px;">Drag the arrows in the 3D view to move the tool.</div>
+                </div>
+                <div class="row" id="step-row"><label>Button step</label><select id="sel-step"><option>1</option><option selected>5</option><option>10</option><option>15</option></select><label>°</label></div>
+                <div id="joint-jog-container"></div>
+                <div class="action-block">
+                    <button class="btn-action" id="btn-reset-pos">🔄 RESET JOINT POSITIONS (0°)</button>
+                    <div class="jog-row" style="grid-template-columns: 50px minmax(0,1fr) 44px; margin:0;">
+                        <div class="jog-label" style="color:var(--mut)">SPEED</div>
+                        <input type="range" id="sld-speed" min="5" max="100" value="50" step="5">
+                        <div class="val-display" id="val-speed" style="color:var(--acc);font-weight:700">50%</div>
+                    </div>
+                    <button class="btn-action" id="btn-save-step">💾 RECORD STEP POSITION</button>
+                </div>
+              </div>
             </div>
-            <button class="btn-action" id="btn-save-step">💾 RECORD STEP POSITION</button>
-            <button class="btn-action" id="btn-run-sim">▶️ RUN SIMULATION</button>
-            <button class="btn-action" id="btn-clear-seq">🗑️ CLEAR SEQUENCE</button>
-            <div class="step-counter" id="lbl-steps">Steps: 0</div>
+
+            <div class="pane" id="pane-prog">
+                <div class="action-block" style="margin:0 0 10px;border:0;padding:0;">
+                    <button class="btn-action" id="btn-run-sim">▶️ RUN SIMULATION</button>
+                    <div class="row" style="margin:0"><label><input type="checkbox" id="chk-loop"> Loop</label><div style="flex:1"></div><span class="step-counter" id="lbl-steps">Steps: 0</span></div>
+                    <button class="btn-action" id="btn-clear-seq">🗑️ CLEAR SEQUENCE</button>
+                </div>
+                <table><thead><tr><th>#</th><th>Joint targets (°)</th><th></th></tr></thead><tbody id="prog-body"></tbody></table>
+                <div class="note" id="prog-empty">No steps yet. Jog the robot (or use gesture), then press Record.</div>
+            </div>
+
+            <div class="pane learn" id="pane-learn">
+                <h4>Joint jog vs TCP jog</h4><p>Joint mode moves one axis (A1 to A6) at a time. TCP mode lets you drag the tool tip in space; the computer finds the joint angles for you (inverse kinematics).</p>
+                <h4>What is the TCP?</h4><p>The Tool Centre Point is the working point of the tool, for example the tip of the welding electrode. Robot programs store where the TCP must go.</p>
+                <h4>Joint limits</h4><p>Every axis has a travel range. The red value and the warning chip show when an axis is close to its end stop.</p>
+                <h4>Singularity</h4><p>When axis A5 is near 0°, axes A4 and A6 line up and the wrist loses one direction of motion. Keep A5 away from 0° in welding moves.</p>
+                <h4>Recording a program</h4><p>Move the robot, press Record, repeat. Run Simulation then blends smoothly from one recorded pose to the next. Use the speed slider to slow it down.</p>
+                <h4>Gesture mode</h4><p>Hold your palm in the box for 2 seconds, move your hand to move the tool, roll the hand to turn A6, and pinch to record.</p>
+                <h4>Shortcuts</h4><p>R record · Space run or stop · 1 to 6 select axis, then ← → to jog · I T F S fit views.</p>
+            </div>
         </div>
     </div>
 
-    <div id="canvas-container"></div>
+    <div id="statusbar"><span id="sb-tcp">TCP -</span><span id="sb-joints">Joints -</span><span id="sb-steps">Steps 0</span><span id="sb-speed">Speed 50%</span></div>
+
 
     <script>
         const data = JSON.parse(JSON.stringify(__PAYLOAD_STREAM__));
@@ -430,7 +517,7 @@ def build_embedded_viewport(payload):
         
         const J_STEP = 5 * (Math.PI / 180);
 
-        THREE.Object3D.DefaultUp.set(0, 0, 1);
+        (THREE.Object3D.DefaultUp || THREE.Object3D.DEFAULT_UP).set(0, 0, 1);
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x111111);
@@ -473,7 +560,7 @@ def build_embedded_viewport(payload):
         transformGizmo.attach(tcpAnchorPivot);
         transformGizmo.visible = false;
         transformGizmo.enabled = false;
-        scene.add(transformGizmo);
+        scene.add(transformGizmo.isObject3D ? transformGizmo : transformGizmo.getHelper());
 
         transformGizmo.addEventListener('dragging-changed', function (e) {
             controls.enabled = !e.value;
@@ -681,10 +768,7 @@ def build_embedded_viewport(payload):
             lastComputedTransforms = computeForwardKinematics(localJointAngles);
             embeddedTrajectory.push({ angles: [...localJointAngles], transforms: JSON.parse(JSON.stringify(lastComputedTransforms)) });
             updateUIElements();
-            const targetUrl = new URL(window.parent.location.href);
-            targetUrl.searchParams.set("event", "sync_sequence");
-            targetUrl.searchParams.set("program_data", JSON.stringify(embeddedTrajectory));
-            window.parent.history.replaceState({}, '', targetUrl.toString());
+            syncProgramToParent('sync_sequence');
         }
 
         function updateMonitorHUDText(vectorPos) {
@@ -729,25 +813,6 @@ def build_embedded_viewport(payload):
             startWebcam();
         });
 
-        const rowsContainer = document.getElementById('joint-jog-container');
-        for(let i=1; i<=6; i++) {
-            const row = document.createElement('div');
-            row.className = 'jog-row';
-            row.innerHTML = '<button class="jog-btn" id="btn-m-' + i + '">-</button><div class="jog-label">A' + i + '</div><div class="val-display" id="val-' + i + '">0.0°</div><button class="jog-btn" id="btn-p-' + i + '">+</button>';
-            rowsContainer.appendChild(row);
-            (function(idx) {
-                document.getElementById('btn-m-' + idx).addEventListener('click', () => jogJoint(idx, -1));
-                document.getElementById('btn-p-' + idx).addEventListener('click', () => jogJoint(idx, 1));
-            })(i);
-        }
-        
-        const e1Row = document.createElement('div');
-        e1Row.className = 'jog-row'; e1Row.style.marginTop = '10px'; e1Row.style.borderTop = '1px solid #333'; e1Row.style.paddingTop = '8px';
-        e1Row.innerHTML = '<button class="jog-btn" id="btn-m-7">-</button><div class="jog-label" style="color:#ff9800;">E1</div><div class="val-display" id="val-7">0.0°</div><button class="jog-btn" id="btn-p-7">+</button>';
-        rowsContainer.appendChild(e1Row);
-        document.getElementById('btn-m-7').addEventListener('click', () => jogJoint(7, -1));
-        document.getElementById('btn-p-7').addEventListener('click', () => jogJoint(7, 1));
-
         function jogJoint(jointIdx, direction) {
             if(runSimulation) return;
             let nextAngle = localJointAngles[jointIdx] + (direction * J_STEP);
@@ -761,27 +826,18 @@ def build_embedded_viewport(payload):
             if(runSimulation) return;
             for(let i = 1; i <= 6; i++) { localJointAngles[i] = 0.0; }
             refreshSceneDisplay(true);
-            
-            const targetUrl = new URL(window.parent.location.href);
-            targetUrl.searchParams.set("event", "reset_joints");
-            window.parent.location.href = targetUrl.toString();
+            syncProgramToParent('reset_joints');
         });
 
-        function updateUIElements() { document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length; }
+        var updateUIElements = function() { document.getElementById('lbl-steps').innerText = "Steps: " + embeddedTrajectory.length; }
         document.getElementById('sld-speed').addEventListener('input', (e) => { document.getElementById('val-speed').innerText = e.target.value + "%"; });
 
-        document.getElementById('btn-save-step').addEventListener('click', triggerManualStepRecord);
-
-        document.getElementById('btn-run-sim').addEventListener('click', () => {
-            if(embeddedTrajectory.length < 2) { alert("Please record at least 2 structural step points."); return; }
-            simStepIndex = 0; interpolationFraction = 0; runSimulation = true;
-        });
+        document.getElementById('btn-save-step').addEventListener('click', () => { triggerManualStepRecord(); toast('Step ' + embeddedTrajectory.length + ' recorded'); });
 
         document.getElementById('btn-clear-seq').addEventListener('click', () => {
+            if (runSimulation) return;
             embeddedTrajectory = []; updateUIElements();
-            const targetUrl = new URL(window.parent.location.href);
-            targetUrl.searchParams.set("event", "clear_sequence");
-            window.parent.location.href = targetUrl.toString();
+            syncProgramToParent('clear_sequence');
         });
 
         let simStepIndex = 0; let interpolationFraction = 0; let runSimulation = false;
@@ -791,7 +847,6 @@ def build_embedded_viewport(payload):
             controls.update();
 
             if (runSimulation && embeddedTrajectory.length >= 2) {
-                document.getElementById('jog-pendant').style.opacity = "0.3"; 
                 document.getElementById('status').innerText = "Status: Running Sequence Simulation";
                 let currentPoint = embeddedTrajectory[simStepIndex];
                 let nextPoint = embeddedTrajectory[simStepIndex + 1];
@@ -800,7 +855,7 @@ def build_embedded_viewport(payload):
                 interpolationFraction += computedStepIncrement;
                 if(interpolationFraction >= 1.0) {
                     interpolationFraction = 0; simStepIndex++;
-                    if (simStepIndex >= embeddedTrajectory.length - 1) { runSimulation = false; simStepIndex = 0; }
+                    if (simStepIndex >= embeddedTrajectory.length - 1) { if (!document.getElementById('chk-loop').checked) { runSimulation = false; } simStepIndex = 0; }
                 }
 
                 let blendedTransforms = [];
@@ -812,7 +867,6 @@ def build_embedded_viewport(payload):
                 localJointAngles = [...currentPoint.angles]; 
                 updateSceneTransforms(blendedTransforms, data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ, data.toolRotX, data.toolRotY, data.toolRotZ, data.jigX, data.jigY, data.jigZ, ((1 - interpolationFraction) * currentPoint.angles[7] + interpolationFraction * nextPoint.angles[7]));
             } else {
-                document.getElementById('jog-pendant').style.opacity = "1.0";
                 if(activeJogMode === "gesture") {
                     document.getElementById('status').innerText = "Status: Hybrid Gesture Control Active";
                 } else {
@@ -1060,13 +1114,183 @@ def build_embedded_viewport(payload):
             if (mpCamera) { mpCamera.stop(); mpCamera = null; } 
         }
 
+        /* ======================= UI LAYER (added; kinematics above is unchanged) ======================= */
+        const $ = (id) => document.getElementById(id);
+        const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+        const REACH = { ABB_6700: 2.65, ABB_4400: 1.95, ABB_6600: 2.55, KUKA_KR150: 3.1, Yaskawa_3500: 2.45 };
+        $('chip-robot').innerText = data.profileName.replace('_', ' ');
+        $('inf-model').innerText = data.profileName.replace('_', ' ');
+        $('inf-reach').innerText = (REACH[data.profileName] || 2.5).toFixed(2);
+
+        function toast(msg) { const t = $('toast'); t.innerText = msg; t.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = 'none', 3500); }
+
+        // tabs
+        document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+            document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+            document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + t.dataset.tab));
+            if (t.dataset.tab === 'prog') renderProgram();
+        }));
+
+        // visibility toggles
+        const visTargets = { robot: () => links, tool: () => [gunMesh], jig: () => [jigMesh], grid: () => [grid] };
+        document.querySelectorAll('.eye').forEach(e => e.addEventListener('click', () => {
+            const on = e.classList.toggle('off') === false;
+            visTargets[e.dataset.vis]().forEach(o => o.visible = on);
+        }));
+
+        // camera views
+        function setView(name) {
+            const t = controls.target;
+            if (name === 'iso' || name === 'fit') { t.set(0.8, 0, 0.8); camera.position.set(4.0, -4.0, 3.0); }
+            if (name === 'front') { t.set(0.8, 0, 0.8); camera.position.set(0.8, -6, 1.0); }
+            if (name === 'side') { t.set(0.8, 0, 0.8); camera.position.set(6.5, 0, 1.0); }
+            if (name === 'top') { t.set(0.8, 0, 0); camera.position.set(0.8, 0.001, 7); }
+            camera.up.set(0, 0, 1); controls.update();
+        }
+        document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+
+        // joint rows: slider + minus/plus + value (ids val-i, btn-m-i, btn-p-i are the originals)
+        function setJointAbs(i, ang) {
+            if (runSimulation) return;
+            ang = Math.max(limitsConfig[i - 1][0], Math.min(limitsConfig[i - 1][1], ang));
+            localJointAngles[i] = ang;
+            refreshSceneDisplay(true);
+        }
+        function stepRad() { return parseFloat($('sel-step').value) * D2R; }
+        function jogJointUI(i, dir) { setJointAbs(i, localJointAngles[i] + dir * stepRad()); }
+        function buildJogRows() {
+            const wrap = $('joint-jog-container'); wrap.innerHTML = '';
+            for (let i = 1; i <= 7; i++) {
+                const row = document.createElement('div'); row.className = 'jog-row' + (i === 7 ? ' e1sep' : '');
+                const lo = Math.round(limitsConfig[i - 1][0] * R2D), hi = Math.round(limitsConfig[i - 1][1] * R2D);
+                row.innerHTML = '<div class="jog-label"' + (i === 7 ? ' style="color:var(--acc)"' : '') + '>' + (i === 7 ? 'E1' : 'A' + i) + '</div>' +
+                    '<button class="jog-btn" id="btn-m-' + i + '">-</button>' +
+                    '<input type="range" id="sld-j-' + i + '" min="' + lo + '" max="' + hi + '" step="0.5" value="0">' +
+                    '<button class="jog-btn" id="btn-p-' + i + '">+</button>' +
+                    '<div class="val-display" id="val-' + i + '">0.0°</div>';
+                wrap.appendChild(row);
+                $('btn-m-' + i).addEventListener('click', () => jogJointUI(i, -1));
+                $('btn-p-' + i).addEventListener('click', () => jogJointUI(i, 1));
+                $('sld-j-' + i).addEventListener('input', (e) => setJointAbs(i, parseFloat(e.target.value) * D2R));
+            }
+        }
+        buildJogRows();
+
+        // live read-outs (called every frame; cheap)
+        let lastSig = '';
+        function updateReadouts() {
+            const a = localJointAngles;
+            let near = false;
+            for (let i = 1; i <= 7; i++) {
+                const s = $('sld-j-' + i); if (s && document.activeElement !== s) s.value = (a[i] * R2D).toFixed(1);
+                const lo = limitsConfig[i - 1][0], hi = limitsConfig[i - 1][1], span = hi - lo;
+                const isNear = (a[i] - lo) < 0.03 * span || (hi - a[i]) < 0.03 * span;
+                const v = $('val-' + i); if (v) v.classList.toggle('near', isNear);
+                if (isNear && i <= 6) near = true;
+            }
+            const pl = $('pill-lim'); pl.className = 'pill' + (near ? ' bad' : ''); pl.innerText = near ? 'Joint near limit' : 'Joint limits OK';
+            if (links[6]) {
+                const p = links[6].position; const sh = links[2] ? links[2].position : new THREE.Vector3(); const r = Math.hypot(p.x - sh.x, p.y - sh.y, p.z - sh.z);   // reach is measured from the shoulder (A2)
+                const out = r > (REACH[data.profileName] || 2.5);
+                const pr = $('pill-reach'); pr.className = 'pill' + (out ? ' bad' : ''); pr.innerText = out ? 'Beyond reach' : 'Within reach';
+                const sig = [p.x, p.y, p.z, a.join()].join('|');
+                if (sig !== lastSig) {
+                    lastSig = sig;
+                    $('sb-tcp').innerHTML = 'TCP <b>X ' + (p.x * 1000).toFixed(0) + ' Y ' + (p.y * 1000).toFixed(0) + ' Z ' + (p.z * 1000).toFixed(0) + '</b> mm';
+                    $('sb-joints').innerHTML = 'Joints <b>' + a.slice(1, 7).map(v => (v * R2D).toFixed(0)).join(' ') + '</b> · E1 <b>' + (a[7] * R2D).toFixed(0) + '</b>';
+                }
+            }
+            $('sb-steps').innerText = 'Steps ' + embeddedTrajectory.length;
+            $('sb-speed').innerText = 'Speed ' + $('sld-speed').value + '%';
+            $('chip-mode').innerText = activeJogMode === 'joint' ? 'Joint' : activeJogMode === 'tcp' ? 'TCP' : 'Gesture';
+        }
+
+        // program table
+        function syncProgramToParent(evt) {
+            try {
+                const u = new URL(window.parent.location.href);
+                u.searchParams.set('event', evt);
+                if (evt === 'sync_sequence') u.searchParams.set('program_data', JSON.stringify(embeddedTrajectory));
+                else u.searchParams.delete('program_data');
+                window.parent.history.replaceState({}, '', u.toString());   // no page reload: Streamlit reads it on its next rerun
+            } catch (e) { /* parent not reachable: the program still works locally */ }
+        }
+        function renderProgram() {
+            const tb = $('prog-body'); tb.innerHTML = '';
+            embeddedTrajectory.forEach((st, i) => {
+                const tr = document.createElement('tr'); tr.dataset.i = i;
+                tr.innerHTML = '<td>' + (i + 1) + '</td><td>' + st.angles.slice(1, 7).map(v => (v * R2D).toFixed(0)).join(' ') + (Math.abs(st.angles[7]) > 0.01 ? ' · E1 ' + (st.angles[7] * R2D).toFixed(0) : '') + '</td>' +
+                    '<td style="white-space:nowrap"><button class="mini" data-go="' + i + '" title="Move robot to this step">⇥</button> <button class="mini" data-del="' + i + '" title="Delete step">✕</button></td>';
+                tb.appendChild(tr);
+            });
+            $('prog-empty').style.display = embeddedTrajectory.length ? 'none' : 'block';
+            $('inf-steps').innerText = embeddedTrajectory.length;
+        }
+        $('prog-body').addEventListener('click', (e) => {
+            const g = e.target.getAttribute('data-go'), d = e.target.getAttribute('data-del');
+            if (g !== null && !runSimulation) { localJointAngles = [...embeddedTrajectory[+g].angles]; refreshSceneDisplay(true); toast('Moved to step ' + (+g + 1)); }
+            if (d !== null && !runSimulation) { embeddedTrajectory.splice(+d, 1); updateUIElements(); syncProgramToParent(embeddedTrajectory.length ? 'sync_sequence' : 'clear_sequence'); }
+        });
+        const _origUpdateUI = updateUIElements;
+        updateUIElements = function () { _origUpdateUI(); renderProgram(); };
+
+        // export
+        $('btn-export').addEventListener('click', () => {
+            if (!embeddedTrajectory.length) { toast('Nothing to export yet. Record some steps first.'); return; }
+            let t = '! Robot program exported from Industrial Robot Cloud Simulator\n! Robot: ' + data.profileName + '\n! Joint targets in degrees (A1..A6), E1 positioner\n\n';
+            embeddedTrajectory.forEach((s, i) => {
+                const q = s.angles.slice(1, 7).map(v => (v * R2D).toFixed(2)).join(', ');
+                t += 'MoveAbsJ  [' + q + '], E1=' + (s.angles[7] * R2D).toFixed(2) + ', speed=' + $('sld-speed').value + '%;   ! step ' + (i + 1) + '\n';
+            });
+            const url = URL.createObjectURL(new Blob([t], { type: 'text/plain' }));
+            const a = document.createElement('a'); a.href = url; a.download = data.profileName + '_program.txt'; a.click(); URL.revokeObjectURL(url);
+        });
+        $('btn-help').addEventListener('click', () => { document.querySelector('.tab[data-tab="learn"]').click(); });
+
+        // run / stop button
+        function toggleRun() {
+            if (runSimulation) { runSimulation = false; simStepIndex = 0; interpolationFraction = 0; return; }
+            if (embeddedTrajectory.length < 2) { toast('Record at least 2 steps first.'); return; }
+            simStepIndex = 0; interpolationFraction = 0; runSimulation = true;
+        }
+        $('btn-run-sim').addEventListener('click', toggleRun);
+        function updateRunUI() {
+            document.body.classList.toggle('running', runSimulation);
+            const b = $('btn-run-sim'); b.classList.toggle('stop', runSimulation);
+            b.innerText = runSimulation ? '⏹ STOP SIMULATION' : '▶️ RUN SIMULATION';
+        }
+
+        // keyboard
+        let selAxis = 1;
+        window.addEventListener('keydown', (e) => {
+            if (e.target && (e.target.tagName === 'INPUT' && e.target.type !== 'range' || e.target.tagName === 'SELECT')) return;
+            const k = e.key.toLowerCase();
+            if (k === 'r') { triggerManualStepRecord(); toast('Step recorded'); }
+            else if (k === ' ') { e.preventDefault(); toggleRun(); }
+            else if (k >= '1' && k <= '6') { selAxis = +k; toast('Axis A' + k + ' selected: use ← → to jog'); }
+            else if (k === 'arrowleft' && activeJogMode === 'joint') { jogJointUI(selAxis, -1); e.preventDefault(); }
+            else if (k === 'arrowright' && activeJogMode === 'joint') { jogJointUI(selAxis, 1); e.preventDefault(); }
+            else if (k === 'i') setView('iso'); else if (k === 'f') setView('front'); else if (k === 's') setView('side'); else if (k === 't') setView('top');
+        });
+
+        // keep the 3D canvas sized to its panel
+        if (window.ResizeObserver) new ResizeObserver(() => {
+            if (!container.clientWidth || !container.clientHeight) return;
+            camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }).observe(container);
+
+        setInterval(updateReadouts, 120);
+        setInterval(updateRunUI, 150);
+        updateReadouts();
+
         refreshSceneDisplay(true); updateUIElements(); animate();
     </script>
 </body>
 </html>"""
     
     html_source = html_source.replace("__PAYLOAD_STREAM__", json_stream)
-    components.html(html_source, height=750, scrolling=False)
+    components.html(html_source, height=820, scrolling=False)
 
 # --- 9. DYNAMIC HARDWARE FILE BINDING LAYER ---
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
