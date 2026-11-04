@@ -143,7 +143,13 @@ first_profile_idx = available_profiles.index("ABB_6700") if "ABB_6700" in availa
 CATEGORY_MAPPING = {"Nil": None, "Welding Guns": "welding_guns", "Grippers": "grippers", "Welding Torches": "welding_torches"}
 DEFAULT_BASES = [(0.0, 0.0, 0.0, 0.0), (3.2, 0.0, 0.0, np.pi), (1.6, -2.4, 0.0, np.pi / 2), (1.6, 2.4, 0.0, -np.pi / 2)]
 
-setup_box = st.expander("⚙️ Simulation Setup  (click here to minimise after setting)", expanded=True)
+show_setup = st.toggle("⚙️ Show Simulation Setup  (switch OFF to hide the panel after setting)", value=True, key="show_setup")
+try:
+    setup_box = st.container(border=True, key="setup_box")      # hidden with CSS when switched off, so every setting is kept
+except TypeError:
+    setup_box = st.expander("⚙️ Simulation Setup", expanded=True)
+if not show_setup:
+    st.markdown("<style>.st-key-setup_box{display:none !important} iframe{height:calc(100vh - 110px) !important;min-height:640px}</style>", unsafe_allow_html=True)
 with setup_box:
     top_a, top_b = st.columns([1, 2])
     with top_a:
@@ -414,7 +420,6 @@ def build_embedded_viewport(payload):
         <span class="chip">Robot <b id="chip-robot">-</b></span>
         <span class="chip">Mode <b id="chip-mode">Joint</b></span>
         <div class="tb-sp"></div>
-        <button class="tbtn" id="btn-setup" title="Hide or show the Simulation Setup panel above">⚙ Hide setup</button>
         <button class="tbtn" id="btn-export" title="Download the recorded program as a text file">⬇ Export program</button>
         <button class="tbtn" id="btn-help" title="Keyboard shortcuts">? Help</button>
     </div>
@@ -1815,20 +1820,6 @@ def build_embedded_viewport(payload):
             openCtx(e.clientX, e.clientY);
         });
         window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtx(); });
-
-        /* ---------- hide / show the Simulation Setup panel (it lives in the Streamlit page above this frame) ---------- */
-        function setupEl() { try { return window.parent.document.querySelector('[data-testid="stExpander"]'); } catch (e) { return null; } }
-        function setSetupHidden(h, quiet) {
-            const el = setupEl(), fr = window.frameElement;
-            if (!el) { if (!quiet) toast('Click the "Simulation Setup" bar above this window to hide or show it.'); return; }
-            el.style.display = h ? 'none' : '';
-            if (fr) { try { fr.style.height = h ? Math.max(620, window.parent.innerHeight - 40) + 'px' : '820px'; } catch (e) { } }
-            $('btn-setup').innerText = h ? '⚙ Show setup' : '⚙ Hide setup';
-            try { localStorage.setItem('olp.hideSetup', h ? '1' : '0'); } catch (e) { }
-            if (!h) { try { window.parent.scrollTo(0, 0); } catch (e) { } }
-        }
-        $('btn-setup').addEventListener('click', () => setSetupHidden($('btn-setup').innerText.indexOf('Hide') >= 0));
-        try { if (localStorage.getItem('olp.hideSetup') === '1') setSetupHidden(true, true); } catch (e) { }
 
         // ---------- init ----------
         buildTree(); setGizmoMode('translate'); applySnap();
