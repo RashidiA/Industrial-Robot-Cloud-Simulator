@@ -375,6 +375,13 @@ def build_embedded_viewport(payload):
         .rbadge.act { background: rgba(255,152,0,.15); }
         .node.act .nm { color: var(--acc); font-weight: 700; }
         tr.seqcur td { background: rgba(76,175,80,.22); }
+        #ctxmenu { position: absolute; z-index: 40; display: none; background: rgba(20,22,28,.98); border: 1px solid var(--acc); border-radius: 8px; padding: 4px; min-width: 210px; box-shadow: 0 8px 24px rgba(0,0,0,.6); }
+        #ctxmenu .chead { padding: 6px 10px; font-size: 11px; color: var(--acc); font-weight: 700; border-bottom: 1px solid var(--line); margin-bottom: 3px; }
+        #ctxmenu .csep { height: 1px; background: var(--line); margin: 4px 2px; }
+        #ctxmenu .citem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border: 0; color: var(--txt); padding: 7px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+        #ctxmenu .citem:hover { background: var(--panel2); }
+        #ctxmenu .citem.on { background: rgba(255,152,0,.2); color: var(--acc); }
+        #ctxmenu .citem i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
         /* ---------- status bar ---------- */
         #statusbar { display: flex; gap: 14px; align-items: center; padding: 0 12px; background: #0a0c10; border-top: 1px solid var(--line); font-family: Consolas, monospace; font-size: 11px; color: var(--mut); white-space: nowrap; overflow: hidden; }
         #statusbar b { color: var(--cy); font-weight: 600; }
@@ -1375,7 +1382,7 @@ def build_embedded_viewport(payload):
         partGizmo.attach(partProxy);
         scene.add(partGizmo.isObject3D ? partGizmo : partGizmo.getHelper());
         partGizmo.visible = false; partGizmo.enabled = false;
-        let selPart = null, partDragging = false, gMode = 'translate';
+        let selPart = null, partDragging = false, gMode = 'translate', axisSel = 'all';
 
         function tintPart(obj, on) { obj.traverse(o => { if (o.isMesh && o.material && o.material.emissive) o.material.emissive.setHex(on ? 0x6a3a00 : 0x000000); }); }
         function selectPart(name) {
@@ -1384,7 +1391,7 @@ def build_embedded_viewport(payload):
             if (name === 'tool' && !activeR.hasTool) { toast('This robot has no tool. Choose one in Simulation Setup above.'); name = null; }
             if (name === 'jig' && !(data.jigData && data.jigData.length)) { toast('No jig loaded. Upload a jig STL in Simulation Setup above.'); name = null; }
             stationRobots.forEach(R => tintPart(R.root, false)); tintPart(jigMesh, false);
-            selPart = name;
+            selPart = name; axisSel = 'all';
             if (name === 'tool') tintPart(activeR.gunMesh, true); else if (name === 'robot') tintPart(activeR.root, true); else if (name === 'jig') tintPart(jigMesh, true);
             syncProxy();
             partGizmo.visible = !!name; partGizmo.enabled = !!name; partAxes.visible = !!name;
@@ -1427,8 +1434,8 @@ def build_embedded_viewport(payload):
         partGizmo.addEventListener('dragging-changed', (e) => { partDragging = e.value; controls.enabled = !e.value; if (!e.value) markDirty(); });
         partGizmo.addEventListener('objectChange', applyProxyToPart);
 
-        function setGizmoMode(m) {
-            gMode = m; partGizmo.setMode(m);
+        function setGizmoMode(m, ax) {
+            gMode = m; axisSel = ax || 'all'; partGizmo.setMode(m);
             document.querySelectorAll('.pt-move').forEach(b => b.classList.toggle('active', m === 'translate'));
             document.querySelectorAll('.pt-rot').forEach(b => b.classList.toggle('active', m === 'rotate'));
             applySnap();
@@ -1447,8 +1454,8 @@ def build_embedded_viewport(payload):
             const tool = selPart === 'tool' && snapOn, robot = selPart === 'robot';
             partGizmo.setRotationSnap(tool ? Math.PI / 2 : robot ? 15 * D2R : null);
             partGizmo.setTranslationSnap(tool ? 0.01 : robot ? 0.05 : null);
-            const rotOnlyZ = selPart === 'robot' && gMode === 'rotate';
-            partGizmo.showX = !rotOnlyZ; partGizmo.showY = !rotOnlyZ; partGizmo.showZ = true;
+            const rotOnlyZ = selPart === 'robot' && gMode === 'rotate';   // robots only turn about the vertical axis
+            partGizmo.showX = !rotOnlyZ && (axisSel === 'all' || axisSel === 'x'); partGizmo.showY = !rotOnlyZ && (axisSel === 'all' || axisSel === 'y'); partGizmo.showZ = rotOnlyZ || axisSel === 'all' || axisSel === 'z';
             $('pt-snap').innerText = 'Snap 90°: ' + (snapOn ? 'ON' : 'OFF'); $('pt-snap').classList.toggle('active', snapOn);
             $('tool-only').style.display = selPart === 'tool' ? 'flex' : 'none';
         }
@@ -1701,9 +1708,58 @@ def build_embedded_viewport(payload):
             renderer.setSize(container.clientWidth, container.clientHeight);
         }).observe(container);
 
+
+        /* ======================= RIGHT-CLICK MENU (move / rotate on all axes or one axis) ======================= */
+        const ctx = document.createElement('div'); ctx.id = 'ctxmenu'; $('view').appendChild(ctx);
+        function closeCtx() { ctx.style.display = 'none'; }
+        function openCtx(x, y) {
+            const is = (m, a) => gMode === m && axisSel === a ? ' on' : '';
+            const items = [['h', selPart === 'tool' ? '🔧 Tool' : selPart === 'robot' ? '🦾 ' + rName(activeR) : '⚙ Jig'],
+                ['translate', 'all', '⤢ Move: all axes'], ['translate', 'x', 'Move along X', '#ff6b6b'], ['translate', 'y', 'Move along Y', '#6bff6b'], ['translate', 'z', 'Move along Z', '#6b8bff'],
+                ['sep'],
+                ['rotate', 'all', '⟳ Rotate: all axes'], ['rotate', 'x', 'Rotate about X', '#ff6b6b'], ['rotate', 'y', 'Rotate about Y', '#6bff6b'], ['rotate', 'z', 'Rotate about Z', '#6b8bff'],
+                ['sep'], ['space', '🌐 Space: ' + (gSpace === 'world' ? 'World → switch to Local' : 'Local → switch to World')], ['desel', '✕ Deselect']];
+            ctx.innerHTML = '';
+            items.forEach(it => {
+                if (it[0] === 'sep') { ctx.appendChild(Object.assign(document.createElement('div'), { className: 'csep' })); return; }
+                if (it[0] === 'h') { ctx.appendChild(Object.assign(document.createElement('div'), { className: 'chead', innerText: it[1] })); return; }
+                const b = document.createElement('button'); b.className = 'citem' + ((it[0] === 'translate' || it[0] === 'rotate') ? is(it[0], it[1]) : '');
+                b.innerHTML = (it[3] ? '<i style="background:' + it[3] + '"></i>' : '') + (it[0] === 'space' || it[0] === 'desel' ? it[1] : it[2]);
+                b.addEventListener('click', () => {
+                    if (it[0] === 'space') toggleSpace(); else if (it[0] === 'desel') selectPart(null); else setGizmoMode(it[0], it[1]);
+                    closeCtx();
+                });
+                ctx.appendChild(b);
+            });
+            const vr = $('view').getBoundingClientRect();
+            ctx.style.display = 'block';
+            ctx.style.left = Math.max(4, Math.min(x - vr.left, vr.width - ctx.offsetWidth - 4)) + 'px';
+            ctx.style.top = Math.max(4, Math.min(y - vr.top, vr.height - ctx.offsetHeight - 4)) + 'px';
+        }
+        let rDown = null;
+        renderer.domElement.addEventListener('pointerdown', (e) => { if (e.button === 2) rDown = { x: e.clientX, y: e.clientY }; else closeCtx(); });
+        renderer.domElement.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (busy()) return;
+            if (rDown && Math.hypot(e.clientX - rDown.x, e.clientY - rDown.y) > 5) return;   // it was a right-drag (pan), not a click
+            if (!selPart) {
+                const r = renderer.domElement.getBoundingClientRect();
+                const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+                const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
+                const hit = (obj) => { if (!obj.visible) return false; const b = new THREE.Box3().setFromObject(obj); return !b.isEmpty() && ray.ray.intersectBox(b, new THREE.Vector3()) !== null; };
+                if (activeR.hasTool && hit(activeR.gunMesh)) selectPart('tool');
+                else { let f = false; for (const R of stationRobots) { if (hit(R.links[0]) || hit(R.links[1]) || hit(R.links[2]) || hit(R.links[3])) { activate(R); selectPart('robot'); f = true; break; } } if (!f && data.jigData && data.jigData.length && hit(jigMesh)) selectPart('jig'); }
+                if (!selPart) { toast('Select an object first (left-click the robot, tool or jig), then right-click.'); return; }
+            }
+            openCtx(e.clientX, e.clientY);
+        });
+        window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtx(); });
+
         // ---------- init ----------
         buildTree(); setGizmoMode('translate'); applySnap();
-        loadStation(); buildJogRows(); updateChips(); updateTreeClasses(); renderSeq();
+        loadStation();
+        stationRobots.forEach(R => { R.angles[7] = e1Global; applyPose(R, withRobot(R, () => computeForwardKinematics(R.angles))); });   // put every robot in its configured home pose
+        buildJogRows(); updateChips(); updateTreeClasses(); renderSeq();
         setView('iso');
         setInterval(updateReadouts, 120);
         setInterval(updateRunUI, 150);
