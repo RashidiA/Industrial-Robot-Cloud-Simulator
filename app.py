@@ -171,6 +171,8 @@ with setup_box:
             with open(os.path.join(TEMP_DIR, "jig.stl"), "wb") as f:
                 f.write(up_jig.getbuffer())
             st.cache_data.clear()
+    st.write("**🧱 Fixtures, fences & other objects (optional)**")
+    up_objs = st.file_uploader("Upload fixtures, fences, tables or any other STL files (up to 8)", type=["stl"], accept_multiple_files=True, key="obj_up")
     st.caption("Tip: click a robot, its tool or the jig in the 3D view to move it. Use the Layout tab for exact numbers and the Station tab to build the sequence.")
 
     robot_tabs = st.tabs([f"🤖 Robot {k + 1}" for k in range(n_robots)])
@@ -412,6 +414,7 @@ def build_embedded_viewport(payload):
         <span class="chip">Robot <b id="chip-robot">-</b></span>
         <span class="chip">Mode <b id="chip-mode">Joint</b></span>
         <div class="tb-sp"></div>
+        <button class="tbtn" id="btn-setup" title="Hide or show the Simulation Setup panel above">⚙ Hide setup</button>
         <button class="tbtn" id="btn-export" title="Download the recorded program as a text file">⬇ Export program</button>
         <button class="tbtn" id="btn-help" title="Keyboard shortcuts">? Help</button>
     </div>
@@ -422,6 +425,7 @@ def build_embedded_viewport(payload):
             <div id="robot-nodes"></div>
             <div class="node pick" data-part="tool"><span>🔧</span><span class="nm">Tool of active robot</span><span class="eye" data-vis="tool">👁</span></div>
             <div class="node pick" data-part="jig"><span>⚙</span><span class="nm">Jig / positioner</span><span class="eye" data-vis="jig">👁</span></div>
+            <div id="obj-nodes"></div>
             <div class="node"><span>▦</span><span class="nm">Floor grid</span><span class="eye" data-vis="grid">👁</span></div>
             <div class="h">Active robot</div>
             <div class="infobox">
@@ -508,6 +512,10 @@ def build_embedded_viewport(payload):
                 <div class="h" style="margin-left:0">Tool relative to flange A6</div>
                 <div class="grid3" id="g-tool"></div>
                 <div class="row"><button class="tbtn" id="btn-snap">🧲 Snap tool to flange</button></div>
+                <div id="obj-section" style="display:none"><div class="h" style="margin-left:0">Uploaded fixture / fence / object</div>
+                <div class="note" style="margin:0 0 6px" id="obj-pick"></div>
+                <div class="grid3" id="g-obj"></div>
+                <div class="row"><button class="tbtn" id="btn-okeep">Use CAD origin / centre</button></div></div>
                 <div class="h" style="margin-left:0">Jig / positioner in the cell</div>
                 <div class="grid3" id="g-jig"></div>
                 <div class="row"><button class="tbtn" id="btn-cadx">CAD turn 90° X</button><button class="tbtn" id="btn-cady">CAD turn 90° Y</button></div>
@@ -694,6 +702,24 @@ def build_embedded_viewport(payload):
             internalJigContent.add(m);
         }
 
+        /* ---------- uploaded fixtures, fences and other objects (each one can be selected, moved and rotated) ---------- */
+        const stationObjs = [];
+        (data.objects || []).forEach((oc, k) => {
+            try {
+                const geometry = loader.parse(base64ToArrayBuffer(oc.data));
+                geometry.computeBoundingBox();
+                const bb = geometry.boundingBox, size = bb.getSize(new THREE.Vector3()), cen = bb.getCenter(new THREE.Vector3());
+                const sc = Math.max(size.x, size.y, size.z) > 20 ? 0.001 : 1;        // millimetres or metres, detected from the size
+                geometry.translate(-cen.x, -cen.y, -cen.z);
+                const n = oc.name.toLowerCase(), fence = /fence|guard|cage|barrier|safety|screen/.test(n);
+                const mat = new THREE.MeshStandardMaterial({ color: fence ? 0xffc107 : 0x90a4ae, roughness: 0.5, metalness: 0.3, transparent: fence, opacity: fence ? 0.45 : 1, side: fence ? THREE.DoubleSide : THREE.FrontSide });
+                const mesh = new THREE.Mesh(geometry, mat); mesh.scale.setScalar(sc);
+                const root = new THREE.Group(); root.add(mesh);
+                const def = [-1.5 + (k % 4) * 1.4, -3.2 - Math.floor(k / 4) * 1.4, size.z * sc / 2];
+                root.position.set(def[0], def[1], def[2]); scene.add(root);
+                stationObjs.push({ idx: k, name: oc.name, root: root, mesh: mesh, sc: sc, cen: cen.clone(), keep: false, def: def });
+            } catch (e) { console.log('object failed: ' + oc.name); }
+        });
         function getLinkStructureBaseMatrix(linkData) {
             let mTrans = new THREE.Matrix4().makeTranslation(linkData.trans[0], linkData.trans[1], linkData.trans[2]);
             let mOrient = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(linkData.orient[0], linkData.orient[1], linkData.orient[2], 'XYZ'));
@@ -1259,6 +1285,7 @@ def build_embedded_viewport(payload):
         function updateTreeClasses() {
             document.querySelectorAll('#robot-nodes .node').forEach(n => { const on = +n.dataset.robot === activeR.idx; n.classList.toggle('act', on); n.classList.toggle('sel', on && selPart === 'robot'); });
             document.querySelectorAll('.node.pick[data-part]').forEach(n => n.classList.toggle('sel', n.dataset.part === selPart));
+            document.querySelectorAll('#obj-nodes .node').forEach(n => n.classList.toggle('sel', selPart === 'obj' && +n.dataset.obj === selObj));
             stationRobots.forEach(R => R.sprite.material.opacity = (R === activeR) ? 1 : 0.55);
         }
         function buildTree() {
@@ -1273,6 +1300,12 @@ def build_embedded_viewport(payload):
                     activate(R); selectPart('robot');
                 });
                 const o = document.createElement('option'); o.value = R.idx; o.textContent = rName(R); sel.appendChild(o);
+            });
+            const ob = $('obj-nodes'); ob.innerHTML = '';
+            stationObjs.forEach(o => {
+                const d = document.createElement('div'); d.className = 'node pick'; d.dataset.obj = o.idx;
+                d.innerHTML = '<span>🧱</span><span class="nm">' + o.name + '</span><span class="eye">👁</span>'; ob.appendChild(d);
+                d.addEventListener('click', (e) => { if (e.target.classList.contains('eye')) { o.root.visible = !o.root.visible; e.target.classList.toggle('off', !o.root.visible); return; } selectPart('obj', o.idx); });
             });
             $('robot-sel-row').style.display = stationRobots.length > 1 ? 'flex' : 'none';
             sel.addEventListener('change', () => activate(stationRobots[+sel.value]));
@@ -1382,21 +1415,22 @@ def build_embedded_viewport(payload):
         partGizmo.attach(partProxy);
         scene.add(partGizmo.isObject3D ? partGizmo : partGizmo.getHelper());
         partGizmo.visible = false; partGizmo.enabled = false;
-        let selPart = null, partDragging = false, gMode = 'translate', axisSel = 'all';
+        let selObj = 0, selPart = null, partDragging = false, gMode = 'translate', axisSel = 'all';
 
         function tintPart(obj, on) { obj.traverse(o => { if (o.isMesh && o.material && o.material.emissive) o.material.emissive.setHex(on ? 0x6a3a00 : 0x000000); }); }
-        function selectPart(name) {
+        function selectPart(name, idx) {
             if (busy()) return;
             if (name === '') name = null;
             if (name === 'tool' && !activeR.hasTool) { toast('This robot has no tool. Choose one in Simulation Setup above.'); name = null; }
             if (name === 'jig' && !(data.jigData && data.jigData.length)) { toast('No jig loaded. Upload a jig STL in Simulation Setup above.'); name = null; }
-            stationRobots.forEach(R => tintPart(R.root, false)); tintPart(jigMesh, false);
-            selPart = name; axisSel = 'all';
-            if (name === 'tool') tintPart(activeR.gunMesh, true); else if (name === 'robot') tintPart(activeR.root, true); else if (name === 'jig') tintPart(jigMesh, true);
+            if (name === 'obj' && !stationObjs[idx]) name = null;
+            stationRobots.forEach(R => tintPart(R.root, false)); tintPart(jigMesh, false); stationObjs.forEach(o => tintPart(o.root, false));
+            selPart = name; axisSel = 'all'; if (name === 'obj') selObj = idx;
+            if (name === 'tool') tintPart(activeR.gunMesh, true); else if (name === 'robot') tintPart(activeR.root, true); else if (name === 'jig') tintPart(jigMesh, true); else if (name === 'obj') tintPart(stationObjs[idx].root, true);
             syncProxy();
             partGizmo.visible = !!name; partGizmo.enabled = !!name; partAxes.visible = !!name;
             $('parttools').style.display = name ? 'block' : 'none';
-            $('pt-name').innerText = name === 'tool' ? '🔧 ' + activeR.label + ' tool (moves with the flange)' : name === 'robot' ? '🦾 ' + rName(activeR) + ' base: move it anywhere, the tool follows' : name === 'jig' ? '⚙ Jig selected' : '';
+            $('pt-name').innerText = name === 'tool' ? '🔧 ' + activeR.label + ' tool (moves with the flange)' : name === 'robot' ? '🦾 ' + rName(activeR) + ' base: move it anywhere, the tool follows' : name === 'jig' ? '⚙ Jig selected' : name === 'obj' ? '🧱 ' + stationObjs[idx].name : '';
             applySnap(); updateTreeClasses(); applyGizmoVisibility();
         }
         function applyGizmoVisibility() {
@@ -1409,6 +1443,7 @@ def build_embedded_viewport(payload):
             if (!selPart || partDragging) return;
             if (selPart === 'tool') { toolAdjustmentGroup.updateWorldMatrix(true, false); toolAdjustmentGroup.getWorldPosition(partProxy.position); toolAdjustmentGroup.getWorldQuaternion(partProxy.quaternion); }
             else if (selPart === 'robot') { partProxy.position.copy(activeR.root.position); partProxy.quaternion.copy(activeR.root.quaternion); }
+            else if (selPart === 'obj') { const o = stationObjs[selObj]; partProxy.position.copy(o.root.position); partProxy.quaternion.copy(o.root.quaternion); }
             else { partProxy.position.copy(jigMesh.position); partProxy.quaternion.copy(jigMesh.quaternion); }
         }
         (function loop() { requestAnimationFrame(loop); syncProxy(); })();
@@ -1425,6 +1460,8 @@ def build_embedded_viewport(payload):
             } else if (selPart === 'robot') {
                 activeR.root.position.copy(partProxy.position);
                 activeR.root.rotation.set(0, 0, new THREE.Euler().setFromQuaternion(partProxy.quaternion, 'ZYX').z);   // robots only turn about the vertical axis
+            } else if (selPart === 'obj') {
+                const o = stationObjs[selObj]; o.root.position.copy(partProxy.position); o.root.quaternion.copy(partProxy.quaternion);
             } else if (selPart === 'jig') {
                 data.jigX = partProxy.position.x; data.jigY = partProxy.position.y; data.jigZ = partProxy.position.z;
                 jigMesh.quaternion.copy(partProxy.quaternion);
@@ -1490,20 +1527,28 @@ def build_embedded_viewport(payload):
         });
         let selAxis = 1;
 
-        // ---------- click in 3D to select (ray against bounding boxes: tool, then robots, then jig) ----------
+        // ---------- click in 3D to select (tool, robots and uploaded objects by ray; the jig by its bounding box) ----------
+        function pickAt(e) {
+            const r = renderer.domElement.getBoundingClientRect();
+            const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+            const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
+            const hit = (obj) => { if (!obj.visible) return false; const b = new THREE.Box3().setFromObject(obj); return !b.isEmpty() && ray.ray.intersectBox(b, new THREE.Vector3()) !== null; };
+            if (activeR.hasTool && hit(activeR.gunMesh)) return ['tool'];
+            for (const R of stationRobots) { if (hit(R.links[0]) || hit(R.links[1]) || hit(R.links[2]) || hit(R.links[3])) return ['robot', R]; }
+            let best = null, bd = 1e9;
+            stationObjs.forEach(o => { if (!o.root.visible) return; const h = ray.intersectObject(o.mesh, false); if (h.length && h[0].distance < bd) { bd = h[0].distance; best = o.idx; } });
+            if (best !== null) return ['obj', best];
+            if (data.jigData && data.jigData.length && hit(jigMesh)) return ['jig'];
+            return null;
+        }
+        function selectPicked(p) { if (!p) { selectPart(null); return; } if (p[0] === 'robot') { activate(p[1]); selectPart('robot'); } else selectPart(p[0], p[1]); }
         let downPt = null;
         renderer.domElement.addEventListener('pointerdown', (e) => { downPt = { x: e.clientX, y: e.clientY }; });
         renderer.domElement.addEventListener('pointerup', (e) => {
             if (!downPt || busy()) return;
             const moved = Math.hypot(e.clientX - downPt.x, e.clientY - downPt.y); downPt = null;
-            if (moved > 4 || partGizmo.axis || transformGizmo.axis) return;
-            const r = renderer.domElement.getBoundingClientRect();
-            const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-            const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
-            const hit = (obj) => { if (!obj.visible) return false; const b = new THREE.Box3().setFromObject(obj); return !b.isEmpty() && ray.ray.intersectBox(b, new THREE.Vector3()) !== null; };
-            if (activeR.hasTool && hit(activeR.gunMesh)) { selectPart('tool'); return; }
-            for (const R of stationRobots) { if (hit(R.links[0]) || hit(R.links[1]) || hit(R.links[2]) || hit(R.links[3])) { activate(R); selectPart('robot'); return; } }
-            if (data.jigData && data.jigData.length && hit(jigMesh)) selectPart('jig'); else selectPart(null);
+            if (moved > 4 || partGizmo.axis || transformGizmo.axis || e.button !== 0) return;
+            selectPicked(pickAt(e));
         });
 
         // ---------- numeric fields (Layout tab) ----------
@@ -1513,13 +1558,18 @@ def build_embedded_viewport(payload):
         }
         mkGrid('g-base', [['bx', 'X m'], ['by', 'Y m'], ['bz', 'Z m'], ['byaw', 'Turn °']]);
         mkGrid('g-tool', [['tx', 'X mm'], ['ty', 'Y mm'], ['tz', 'Z mm'], ['rx', 'Rx °'], ['ry', 'Ry °'], ['rz', 'Rz °']]);
+        mkGrid('g-obj', [['ox', 'X m'], ['oy', 'Y m'], ['oz', 'Z m'], ['orx', 'Rx °'], ['ory', 'Ry °'], ['orz', 'Rz °'], ['osc', 'Scale']]);
         mkGrid('g-jig', [['jx', 'X m'], ['jy', 'Y m'], ['jz', 'Z m'], ['jrx', 'Rx °'], ['jry', 'Ry °'], ['jrz', 'Rz °']]);
-        const FIELDS = ['bx', 'by', 'bz', 'byaw', 'tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'jx', 'jy', 'jz', 'jrx', 'jry', 'jrz'];
+        const FIELDS = ['bx', 'by', 'bz', 'byaw', 'tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'jx', 'jy', 'jz', 'jrx', 'jry', 'jrz', 'ox', 'oy', 'oz', 'orx', 'ory', 'orz', 'osc'];
         function syncFields() {
             if (!$('pane-layout').classList.contains('active')) return;
             const jr = new THREE.Euler().setFromQuaternion(jigMesh.quaternion, 'XYZ'), rp = activeR.root.position;
             const v = { bx: rp.x, by: rp.y, bz: rp.z, byaw: activeR.root.rotation.z * R2D, tx: data.toolOffsetX * 1000, ty: data.toolOffsetY * 1000, tz: data.toolOffsetZ * 1000, rx: data.toolRotX * R2D, ry: data.toolRotY * R2D, rz: data.toolRotZ * R2D, jx: data.jigX, jy: data.jigY, jz: data.jigZ, jrx: jr.x * R2D, jry: jr.y * R2D, jrz: jr.z * R2D };
-            FIELDS.forEach(k => { const el = $('f-' + k); if (el && document.activeElement !== el) el.value = (+v[k]).toFixed(k.length === 2 && (k[0] === 'j' || k[0] === 'b') ? 3 : 1); });
+            const so = stationObjs[selObj];
+            if (so) { const oe = new THREE.Euler().setFromQuaternion(so.root.quaternion, 'XYZ'); Object.assign(v, { ox: so.root.position.x, oy: so.root.position.y, oz: so.root.position.z, orx: oe.x * R2D, ory: oe.y * R2D, orz: oe.z * R2D, osc: so.sc }); }
+            $('obj-section').style.display = stationObjs.length ? 'block' : 'none';
+            $('obj-pick').innerText = so ? 'Object: ' + so.name : '';
+            FIELDS.forEach(k => { const el = $('f-' + k); if (!el || document.activeElement === el) return; if (k[0] === 'o' && !so) { el.value = ''; return; } el.value = k === 'osc' ? (+v[k]).toPrecision(4) : (+v[k]).toFixed(k.length === 2 && (k[0] === 'j' || k[0] === 'b' || k[0] === 'o') ? 3 : 1); });
         }
         setInterval(syncFields, 200);
         FIELDS.forEach(k => $('f-' + k).addEventListener('change', () => {
@@ -1534,8 +1584,16 @@ def build_embedded_viewport(payload):
                 if (k === 'jrx') e.x = n * D2R; if (k === 'jry') e.y = n * D2R; if (k === 'jrz') e.z = n * D2R;
                 jigMesh.quaternion.setFromEuler(e);
             }
+            const so = stationObjs[selObj];
+            if (so && k[0] === 'o') {
+                if (k === 'ox') so.root.position.x = n; if (k === 'oy') so.root.position.y = n; if (k === 'oz') so.root.position.z = n;
+                if (k === 'osc' && n > 0) { so.sc = n; so.mesh.scale.setScalar(n); applyKeep(so); }
+                if (k[1] === 'r') { const e = new THREE.Euler().setFromQuaternion(so.root.quaternion, 'XYZ'); if (k === 'orx') e.x = n * D2R; if (k === 'ory') e.y = n * D2R; if (k === 'orz') e.z = n * D2R; so.root.quaternion.setFromEuler(e); }
+            }
             refreshSceneDisplay(false); markDirty();
         }));
+        function applyKeep(o) { o.mesh.position.copy(o.keep ? o.cen.clone().multiplyScalar(o.sc) : new THREE.Vector3()); }
+        $('btn-okeep').addEventListener('click', () => { const o = stationObjs[selObj]; if (!o) { toast('Select an uploaded object first'); return; } o.keep = !o.keep; applyKeep(o); markDirty(); toast(o.keep ? 'Using the CAD origin of ' + o.name : 'Centred on its middle'); });
         $('btn-snap').addEventListener('click', () => { data.toolOffsetX = data.toolOffsetY = data.toolOffsetZ = 0; data.toolRotX = data.toolRotY = data.toolRotZ = 0; refreshSceneDisplay(false); markDirty(); toast('Tool snapped to the flange'); });
         function cadMesh() { return internalJigContent.children[0]; }
         $('btn-cadx').addEventListener('click', () => { const m = cadMesh(); if (m) { m.rotation.x += Math.PI / 2; markDirty(); } else toast('No jig loaded'); });
@@ -1676,6 +1734,7 @@ def build_embedded_viewport(payload):
                 for (let i = robots.length; i < old.length; i++) robots.push(old[i]);      // keep robots that are switched off in Setup, so they come back as they were
                 localStorage.setItem(SKEY, JSON.stringify({
                     e1: e1Global, seq: SEQ, robots: robots,
+                    objs: stationObjs.map(o => ({ n: o.name, p: o.root.position.toArray(), q: o.root.quaternion.toArray(), s: o.sc, k: o.keep })),
                     jig: { p: [data.jigX, data.jigY, data.jigZ], q: jigMesh.quaternion.toArray(), cx: m ? m.rotation.x : null, cy: m ? m.rotation.y : null }
                 }));
             } catch (e) { }
@@ -1685,6 +1744,7 @@ def build_embedded_viewport(payload):
                 const s = localStorage.getItem(SKEY); if (!s) return; const d = JSON.parse(s);
                 if (d.jig) { [data.jigX, data.jigY, data.jigZ] = d.jig.p; jigMesh.quaternion.fromArray(d.jig.q); const m = cadMesh(); if (m && d.jig.cx !== null) { m.rotation.x = d.jig.cx; m.rotation.y = d.jig.cy; } }
                 e1Global = d.e1 || 0;
+                (d.objs || []).forEach((os, i) => { const o = stationObjs[i]; if (!o || o.name !== os.n) return; o.root.position.fromArray(os.p); o.root.quaternion.fromArray(os.q); o.sc = os.s; o.mesh.scale.setScalar(os.s); o.keep = !!os.k; applyKeep(o); });
                 (d.robots || []).forEach((rs, i) => {            // each robot is restored on its own, so adding robot 2 does not disturb robot 1
                     const R = stationRobots[i]; if (!R || rs.p !== R.profile) return;
                     R.root.position.set(rs.base.x, rs.base.y, rs.base.z); R.root.rotation.z = rs.base.yaw;
@@ -1700,6 +1760,7 @@ def build_embedded_viewport(payload):
             try { localStorage.removeItem(SKEY); } catch (e) { }
             stationRobots.forEach((R, i) => { const b = data.robots[i].base; R.root.position.set(b.x, b.y, b.z || 0); R.root.rotation.z = b.yaw || 0; R.tool = { ox: 0, oy: 0, oz: 0, rx: 0, ry: 0, rz: 0 }; });
             bindRobot(activeR);
+            stationObjs.forEach(o => { o.root.position.fromArray(o.def); o.root.quaternion.set(0, 0, 0, 1); });
             data.jigX = data.jigX0; data.jigY = data.jigY0; data.jigZ = data.jigZ0; jigMesh.quaternion.set(0, 0, 0, 1);
             const m = cadMesh(); if (m) { m.rotation.x = data.rotX; m.rotation.y = data.rotY; }
             refreshSceneDisplay(false); toast('Layout reset (robot programs kept)');
@@ -1719,7 +1780,7 @@ def build_embedded_viewport(payload):
         function closeCtx() { ctx.style.display = 'none'; }
         function openCtx(x, y) {
             const is = (m, a) => gMode === m && axisSel === a ? ' on' : '';
-            const items = [['h', selPart === 'tool' ? '🔧 Tool' : selPart === 'robot' ? '🦾 ' + rName(activeR) : '⚙ Jig'],
+            const items = [['h', selPart === 'tool' ? '🔧 Tool' : selPart === 'robot' ? '🦾 ' + rName(activeR) : selPart === 'obj' ? '🧱 ' + stationObjs[selObj].name : '⚙ Jig'],
                 ['translate', 'all', '⤢ Move: all axes'], ['translate', 'x', 'Move along X', '#ff6b6b'], ['translate', 'y', 'Move along Y', '#6bff6b'], ['translate', 'z', 'Move along Z', '#6b8bff'],
                 ['sep'],
                 ['rotate', 'all', '⟳ Rotate: all axes'], ['rotate', 'x', 'Rotate about X', '#ff6b6b'], ['rotate', 'y', 'Rotate about Y', '#6bff6b'], ['rotate', 'z', 'Rotate about Z', '#6b8bff'],
@@ -1748,17 +1809,26 @@ def build_embedded_viewport(payload):
             if (busy()) return;
             if (rDown && Math.hypot(e.clientX - rDown.x, e.clientY - rDown.y) > 5) return;   // it was a right-drag (pan), not a click
             if (!selPart) {
-                const r = renderer.domElement.getBoundingClientRect();
-                const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-                const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
-                const hit = (obj) => { if (!obj.visible) return false; const b = new THREE.Box3().setFromObject(obj); return !b.isEmpty() && ray.ray.intersectBox(b, new THREE.Vector3()) !== null; };
-                if (activeR.hasTool && hit(activeR.gunMesh)) selectPart('tool');
-                else { let f = false; for (const R of stationRobots) { if (hit(R.links[0]) || hit(R.links[1]) || hit(R.links[2]) || hit(R.links[3])) { activate(R); selectPart('robot'); f = true; break; } } if (!f && data.jigData && data.jigData.length && hit(jigMesh)) selectPart('jig'); }
-                if (!selPart) { toast('Select an object first (left-click the robot, tool or jig), then right-click.'); return; }
+                selectPicked(pickAt(e));
+                if (!selPart) { toast('Select an object first (left-click the robot, tool, jig or an uploaded object), then right-click.'); return; }
             }
             openCtx(e.clientX, e.clientY);
         });
         window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtx(); });
+
+        /* ---------- hide / show the Simulation Setup panel (it lives in the Streamlit page above this frame) ---------- */
+        function setupEl() { try { return window.parent.document.querySelector('[data-testid="stExpander"]'); } catch (e) { return null; } }
+        function setSetupHidden(h, quiet) {
+            const el = setupEl(), fr = window.frameElement;
+            if (!el) { if (!quiet) toast('Click the "Simulation Setup" bar above this window to hide or show it.'); return; }
+            el.style.display = h ? 'none' : '';
+            if (fr) { try { fr.style.height = h ? Math.max(620, window.parent.innerHeight - 40) + 'px' : '820px'; } catch (e) { } }
+            $('btn-setup').innerText = h ? '⚙ Show setup' : '⚙ Hide setup';
+            try { localStorage.setItem('olp.hideSetup', h ? '1' : '0'); } catch (e) { }
+            if (!h) { try { window.parent.scrollTo(0, 0); } catch (e) { } }
+        }
+        $('btn-setup').addEventListener('click', () => setSetupHidden($('btn-setup').innerText.indexOf('Hide') >= 0));
+        try { if (localStorage.getItem('olp.hideSetup') === '1') setSetupHidden(true, true); } catch (e) { }
 
         // ---------- init ----------
         buildTree(); setGizmoMode('translate'); applySnap();
@@ -1808,7 +1878,15 @@ for k, cfg in enumerate(robot_cfgs):
     robots_payload.append({"profile": prof, "toolKey": tool_key, "toolName": tool_name,
                            "base": {"x": bx, "y": by, "z": bz, "yaw": float(byaw)}})
 
+objects_payload = []
+for uf in (up_objs or [])[:8]:
+    try:
+        objects_payload.append({"name": os.path.splitext(uf.name)[0], "data": base64.b64encode(uf.getvalue()).decode("utf-8")})
+    except Exception:
+        pass
+
 scene_payload = {
+    "objects": objects_payload,
     "profiles": profiles_payload,
     "tools": tools_payload,
     "robots": robots_payload,
