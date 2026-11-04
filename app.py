@@ -11,7 +11,7 @@ except ImportError:      # ikpy is optional: the browser does the real IK now
     Chain = None
 
 # --- 1. SYSTEM INITIALIZATION ---
-st.set_page_config(page_title="Industrial Robot Cloud Simulator", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Industrial Robot Cloud Simulator", page_icon="🤖", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""<style>
 .block-container{padding-top:.6rem;padding-bottom:0;max-width:100%}
 header[data-testid=stHeader]{background:transparent}
@@ -131,23 +131,19 @@ ROBOT_REGISTRY = {
     }
 }
 
-# --- 3. SELECTION INITIALIZATION LAYER ---
-with st.sidebar:
-    st.title("📟 Simulation Setup")
-    with st.expander("🛠️ Layout Setup", expanded=True):
+# --- 3. SELECTION INITIALIZATION LAYER (now on the main page, click the header to minimise) ---
+setup_box = st.expander("⚙️ Simulation Setup  (click here to minimise after setting)", expanded=True)
+with setup_box:
+    sc1, sc2, sc3 = st.columns([1, 1.3, 1.3])
+    with sc1:
+        st.write("**🤖 Robot**")
         robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
         available_profiles = list(ROBOT_REGISTRY.keys())
-        
         if os.path.exists(robot_folder_path):
             scanned_folders = [f for f in os.listdir(robot_folder_path) if os.path.isdir(os.path.join(robot_folder_path, f))]
             if scanned_folders:
                 available_profiles = sorted(list(set(scanned_folders + available_profiles)))
-
-        selected_profile = st.selectbox(
-            "Select Active Hardware Profile", 
-            options=available_profiles,
-            key="robot_profile_selection"
-        )
+        selected_profile = st.selectbox("Select Active Hardware Profile", options=available_profiles, key="robot_profile_selection")
 
 active_cfg = ROBOT_REGISTRY.get(selected_profile, ROBOT_REGISTRY["ABB_6700"])
 
@@ -202,84 +198,57 @@ if "event" in query_params:
     st.query_params.clear()
 
 # --- 6. OPERATOR INTERFACE CONTROLS ---
-with st.sidebar:
-    with st.expander("🛠️ Layout Setup", expanded=False):
-        if st.button("🔴 RESET TOOL & JIG", use_container_width=True):
-            for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
-                if os.path.exists(f):
-                    try: os.remove(f)
-                    except: pass
-            st.session_state.program = []
-            st.session_state.j_angles = [0.0] * 8
-            st.cache_data.clear()      
-            st.cache_resource.clear()  
-            st.query_params.clear()
-            st.rerun()
-            
-        st.divider()
-        st.write("**🏗️ Rotary Positioning Jig**")
-        up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
-        if up_jig:
-            with open(os.path.join(TEMP_DIR, "jig.stl"), "wb") as f: 
-                f.write(up_jig.getbuffer())
-            st.cache_data.clear()
-            
-        jx_pos = st.number_input("Jig Base X Location", value=1.6, step=0.1)
-        jy_pos = st.number_input("Jig Base Y Location", value=0.0, step=0.1)
-        jz_pos = st.number_input("Jig Base Z Elevation Level", value=0.55, step=0.01, format="%.3f")
-        
-        st.write("**📐 CAD Vector Calibration**")
-        j_rot_x = st.slider("CAD Rotate X Axis", -180, 180, 0, step=90)
-        j_rot_y = st.slider("CAD Rotate Y Axis", -180, 180, 0, step=90)
-        js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
+t_off_x = t_off_y = t_off_z = 0.0          # tool offset and rotation are now set by dragging the tool in the 3D view (Layout tab)
+t_rot_x = t_rot_y = t_rot_z = 0
+jx_pos, jy_pos, jz_pos = 1.6, 0.0, 0.55    # jig position is now set by dragging the jig in the 3D view
+j_rot_x = j_rot_y = 0
+selected_tool_path = None
+with sc1:
+    if st.button("🔴 RESET TOOL & JIG", use_container_width=True):
+        for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
+            if os.path.exists(f):
+                try: os.remove(f)
+                except: pass
+        st.session_state.program = []
+        st.session_state.j_angles = [0.0] * 8
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.query_params.clear()
+        st.rerun()
+    st.caption("Tip: move the tool or jig by clicking it in the 3D view. Open the Layout tab for exact numbers.")
 
-    with st.expander("⚙️ End-Effector Tooling Library", expanded=True):
-        tool_source = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"])
-        selected_tool_path = None
-
-        if tool_source == "Internal Library":
-            CATEGORY_MAPPING = {
-                "Nil": None,
-                "Welding Guns": "welding_guns",
-                "Grippers": "grippers",
-                "Welding Torches": "welding_torches"
-            }
-            selected_category = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()))
-            
-            if selected_category == "Nil":
-                selected_tool_path = None
+with sc2:
+    st.write("**⚙️ End-Effector Tooling**")
+    tool_source = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"], horizontal=True)
+    if tool_source == "Internal Library":
+        CATEGORY_MAPPING = {"Nil": None, "Welding Guns": "welding_guns", "Grippers": "grippers", "Welding Torches": "welding_torches"}
+        selected_category = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()))
+        if selected_category != "Nil":
+            library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", CATEGORY_MAPPING[selected_category])
+            available_tools = []
+            if os.path.exists(library_scan_path):
+                available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
+            if available_tools:
+                selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
+                selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
             else:
-                folder_target_name = CATEGORY_MAPPING[selected_category]
-                library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", folder_target_name)
-                
-                available_tools = []
-                if os.path.exists(library_scan_path):
-                    available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
-                    
-                if available_tools:
-                    selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
-                    selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
-                else:
-                    st.caption("⚠️ No internal library templates found. Please upload an external file.")
-        else:
-            up_gun = st.file_uploader("Upload Custom External Tool STL", type=["stl"], key="gun_up")
-            if up_gun:
-                selected_tool_path = os.path.join(TEMP_DIR, "gun.stl")
-                with open(selected_tool_path, "wb") as f: 
-                    f.write(up_gun.getbuffer())
-                st.cache_data.clear()
+                st.caption("⚠️ No internal library templates found. Please upload an external file.")
+    else:
+        up_gun = st.file_uploader("Upload Custom External Tool STL", type=["stl"], key="gun_up")
+        if up_gun:
+            selected_tool_path = os.path.join(TEMP_DIR, "gun.stl")
+            with open(selected_tool_path, "wb") as f:
+                f.write(up_gun.getbuffer())
+            st.cache_data.clear()
 
-        st.divider()
-        st.write("**📐 6-Axis Tool Center Point (TCP) Offsets**")
-        col_ox, col_oy, col_oz = st.columns(3)
-        with col_ox: t_off_x = st.number_input("Offset X", value=0.00, step=0.05, format="%.2f")
-        with col_oy: t_off_y = st.number_input("Offset Y", value=0.00, step=0.05, format="%.2f")
-        with col_oz: t_off_z = st.number_input("Offset Z", value=0.00, step=0.05, format="%.2f")
-        
-        st.write("**🔄 Tool Mounting Matrix Rotations (Degrees)**")
-        t_rot_x = st.slider("Rotate X Axis (Roll)", -180, 180, 0, step=5)
-        t_rot_y = st.slider("Rotate Y Axis (Pitch)", -180, 180, 0, step=5)
-        t_rot_z = st.slider("Rotate Z Axis (Yaw)", -180, 180, 0, step=5)
+with sc3:
+    st.write("**🏗️ Rotary Positioning Jig**")
+    up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
+    if up_jig:
+        with open(os.path.join(TEMP_DIR, "jig.stl"), "wb") as f:
+            f.write(up_jig.getbuffer())
+        st.cache_data.clear()
+    js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
@@ -380,6 +349,12 @@ def build_embedded_viewport(payload):
         .mini { background: var(--panel2); border: 1px solid var(--line); color: #fff; border-radius: 4px; cursor: pointer; padding: 1px 6px; font-size: 11px; }
         .learn h4 { margin: 14px 0 4px; color: var(--acc); font-size: 12px; }
         .learn p { margin: 0 0 6px; color: #c3c9d4; line-height: 1.55; }
+        #parttools { position: absolute; top: 52px; left: 10px; z-index: 10; display: none; background: rgba(20,22,28,.9); border: 1px solid var(--acc); color: #fff; padding: 5px 10px; border-radius: 8px; font-size: 12px; }
+        .node.sel { background: rgba(255,152,0,.18); outline: 1px solid var(--acc); }
+        .node.pick { cursor: pointer; }
+        .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+        .grid3 label { display: block; color: var(--mut); font-size: 10px; }
+        .grid3 input { width: 100%; background: var(--panel2); color: var(--cy); border: 1px solid var(--line); border-radius: 5px; padding: 4px 5px; font-family: Consolas, monospace; font-size: 12px; }
         /* ---------- status bar ---------- */
         #statusbar { display: flex; gap: 14px; align-items: center; padding: 0 12px; background: #0a0c10; border-top: 1px solid var(--line); font-family: Consolas, monospace; font-size: 11px; color: var(--mut); white-space: nowrap; overflow: hidden; }
         #statusbar b { color: var(--cy); font-weight: 600; }
@@ -417,9 +392,9 @@ def build_embedded_viewport(payload):
     <div id="main">
         <div id="tree">
             <div class="h">Station</div>
-            <div class="node"><span>🦾</span><span class="nm">Robot</span><span class="eye" data-vis="robot">👁</span></div>
-            <div class="node"><span>🔧</span><span class="nm">Tool</span><span class="eye" data-vis="tool">👁</span></div>
-            <div class="node"><span>⚙</span><span class="nm">Jig / positioner</span><span class="eye" data-vis="jig">👁</span></div>
+            <div class="node pick" data-part="robot"><span>🦾</span><span class="nm">Robot</span><span class="eye" data-vis="robot">👁</span></div>
+            <div class="node pick" data-part="tool"><span>🔧</span><span class="nm">Tool (on flange)</span><span class="eye" data-vis="tool">👁</span></div>
+            <div class="node pick" data-part="jig"><span>⚙</span><span class="nm">Jig / positioner</span><span class="eye" data-vis="jig">👁</span></div>
             <div class="node"><span>▦</span><span class="nm">Floor grid</span><span class="eye" data-vis="grid">👁</span></div>
             <div class="h">Selected robot</div>
             <div class="infobox">
@@ -437,6 +412,7 @@ def build_embedded_viewport(payload):
             <div id="viewbtns">
                 <button class="tbtn" data-view="iso">Iso</button><button class="tbtn" data-view="front">Front</button><button class="tbtn" data-view="side">Side</button><button class="tbtn" data-view="top">Top</button><button class="tbtn" data-view="fit">Fit</button>
             </div>
+            <div id="parttools"><span id="pt-name"></span></div>
             <div id="status">WebGL Processing...</div>
             <div id="warn"><span class="pill" id="pill-lim">Joint limits OK</span><span class="pill" id="pill-reach">Within reach</span></div>
             <div id="toast"></div>
@@ -448,7 +424,7 @@ def build_embedded_viewport(payload):
         </div>
 
         <div id="side">
-            <div id="tabs"><div class="tab active" data-tab="jog">Jog</div><div class="tab" data-tab="prog">Program</div><div class="tab" data-tab="learn">Learn</div></div>
+            <div id="tabs"><div class="tab active" data-tab="jog">Jog</div><div class="tab" data-tab="prog">Program</div><div class="tab" data-tab="layout">Layout</div><div class="tab" data-tab="learn">Learn</div></div>
 
             <div class="pane active" id="pane-jog">
               <div id="jog-pendant">
@@ -488,6 +464,25 @@ def build_embedded_viewport(payload):
                 </div>
                 <table><thead><tr><th>#</th><th>Joint targets (°)</th><th></th></tr></thead><tbody id="prog-body"></tbody></table>
                 <div class="note" id="prog-empty">No steps yet. Jog the robot (or use gesture), then press Record.</div>
+            </div>
+
+
+            <div class="pane" id="pane-layout">
+                <div class="note" style="margin:0 0 8px">Click the <b>Tool</b> or the <b>Jig</b> in the 3D view (or in the Station list) to select it. Coloured arrows show its X (red), Y (green) and Z (blue) axes. Drag an arrow to move it, or switch to Rotate and drag a ring.</div>
+                <div class="mode-container">
+                    <button class="mode-btn" id="pt-move">Move (W)</button>
+                    <button class="mode-btn" id="pt-rot">Rotate (E)</button>
+                    <button class="mode-btn" id="pt-space">Space: World (Q)</button>
+                </div>
+                <div class="row"><button class="tbtn" data-sel="tool">🔧 Select tool</button><button class="tbtn" data-sel="jig">⚙ Select jig</button><button class="tbtn" data-sel="">Deselect</button></div>
+                <div class="h" style="margin-left:0">Tool relative to flange A6</div>
+                <div class="grid3" id="g-tool"></div>
+                <div class="row"><button class="tbtn" id="btn-snap">🧲 Snap tool to flange</button></div>
+                <div class="h" style="margin-left:0">Jig / positioner in the cell</div>
+                <div class="grid3" id="g-jig"></div>
+                <div class="row"><button class="tbtn" id="btn-cadx">CAD turn 90° X</button><button class="tbtn" id="btn-cady">CAD turn 90° Y</button></div>
+                <div class="row"><button class="tbtn" id="btn-lay-reset">↺ Reset layout</button></div>
+                <div class="note" style="margin-left:0">Your layout is remembered in this browser for each robot.</div>
             </div>
 
             <div class="pane learn" id="pane-learn">
@@ -1283,6 +1278,149 @@ def build_embedded_viewport(payload):
         setInterval(updateReadouts, 120);
         setInterval(updateRunUI, 150);
         updateReadouts();
+
+        /* ======================= PART EDITING (tool / jig gizmo) ======================= */
+        const partProxy = new THREE.Object3D(); scene.add(partProxy);
+        const partAxes = new THREE.AxesHelper(0.45); partAxes.material.depthTest = false; partAxes.renderOrder = 998; partProxy.add(partAxes); partAxes.visible = false;
+        const partGizmo = new THREE.TransformControls(camera, renderer.domElement);
+        if (partGizmo.setSize) partGizmo.setSize(0.8); else partGizmo.size = 0.8;
+        partGizmo.attach(partProxy);
+        scene.add(partGizmo.isObject3D ? partGizmo : partGizmo.getHelper());
+        partGizmo.visible = false; partGizmo.enabled = false;
+        let selPart = null, partDragging = false;
+
+        function tintPart(obj, on) { obj.traverse(o => { if (o.isMesh && o.material && o.material.emissive) o.material.emissive.setHex(on ? 0x6a3a00 : 0x000000); }); }
+        function hasTool() { return !!(data.gunData && data.gunData.length); }
+        function hasJig() { return !!(data.jigData && data.jigData.length); }
+        function selectPart(name) {
+            if (runSimulation) return;
+            if (name === 'robot' || name === '') name = null;
+            if (name === 'tool' && !hasTool()) { toast('No tool loaded. Choose a tool in Simulation Setup above.'); name = null; }
+            if (name === 'jig' && !hasJig()) { toast('No jig loaded. Upload a jig STL in Simulation Setup above.'); name = null; }
+            tintPart(gunMesh, false); tintPart(jigMesh, false);
+            selPart = name;
+            if (name) { tintPart(name === 'tool' ? gunMesh : jigMesh, true); syncProxy(); }
+            partGizmo.visible = !!name; partGizmo.enabled = !!name; partAxes.visible = !!name;
+            document.querySelectorAll('.node.pick').forEach(n => n.classList.toggle('sel', n.dataset.part === name));
+            $('parttools').style.display = name ? 'block' : 'none';
+            $('pt-name').innerText = name === 'tool' ? '🔧 Tool selected: moves with the flange' : name === 'jig' ? '⚙ Jig selected' : '';
+            applyGizmoVisibility();
+        }
+        function applyGizmoVisibility() {
+            const wantTcp = (activeJogMode !== 'joint') && !selPart;
+            transformGizmo.visible = wantTcp; transformGizmo.enabled = wantTcp;
+        }
+        setInterval(applyGizmoVisibility, 150);
+
+        function syncProxy() {
+            if (!selPart || partDragging) return;
+            if (selPart === 'tool') { toolAdjustmentGroup.updateWorldMatrix(true, false); toolAdjustmentGroup.getWorldPosition(partProxy.position); toolAdjustmentGroup.getWorldQuaternion(partProxy.quaternion); }
+            else { partProxy.position.copy(jigMesh.position); partProxy.quaternion.copy(jigMesh.quaternion); }
+        }
+        (function loop() { requestAnimationFrame(loop); syncProxy(); })();
+
+        function applyProxyToPart() {
+            if (selPart === 'tool' && links[6]) {
+                const q6 = links[6].quaternion, inv = q6.clone().invert();
+                const off = partProxy.position.clone().sub(links[6].position).applyQuaternion(inv);
+                data.toolOffsetX = off.x; data.toolOffsetY = off.y; data.toolOffsetZ = off.z;
+                const e = new THREE.Euler().setFromQuaternion(inv.multiply(partProxy.quaternion.clone()), 'XYZ');
+                data.toolRotX = e.x; data.toolRotY = e.y; data.toolRotZ = e.z;
+            } else if (selPart === 'jig') {
+                data.jigX = partProxy.position.x; data.jigY = partProxy.position.y; data.jigZ = partProxy.position.z;
+                jigMesh.quaternion.copy(partProxy.quaternion);
+            }
+            refreshSceneDisplay(false);
+        }
+        partGizmo.addEventListener('dragging-changed', (e) => { partDragging = e.value; controls.enabled = !e.value; if (!e.value) saveLayout(); });
+        partGizmo.addEventListener('objectChange', applyProxyToPart);
+
+        // move / rotate / space
+        let gSpace = 'world';
+        function setGizmoMode(m) { partGizmo.setMode(m); $('pt-move').classList.toggle('active', m === 'translate'); $('pt-rot').classList.toggle('active', m === 'rotate'); }
+        function toggleSpace() { gSpace = gSpace === 'world' ? 'local' : 'world'; partGizmo.setSpace(gSpace); $('pt-space').innerText = 'Space: ' + (gSpace === 'world' ? 'World' : 'Local') + ' (Q)'; }
+        $('pt-move').addEventListener('click', () => setGizmoMode('translate'));
+        $('pt-rot').addEventListener('click', () => setGizmoMode('rotate'));
+        $('pt-space').addEventListener('click', toggleSpace);
+        setGizmoMode('translate');
+        document.querySelectorAll('[data-sel]').forEach(b => b.addEventListener('click', () => selectPart(b.dataset.sel)));
+        document.querySelectorAll('.node.pick').forEach(n => n.addEventListener('click', () => selectPart(n.dataset.part)));
+        window.addEventListener('keydown', (e) => {
+            if (e.target && (e.target.tagName === 'INPUT' && e.target.type !== 'range' || e.target.tagName === 'SELECT')) return;
+            const k = e.key.toLowerCase();
+            if (k === 'w') setGizmoMode('translate'); else if (k === 'e') setGizmoMode('rotate'); else if (k === 'q') toggleSpace(); else if (k === 'escape') selectPart(null);
+        });
+
+        // click in 3D to select (cheap: ray against bounding boxes, tool first)
+        let downPt = null;
+        renderer.domElement.addEventListener('pointerdown', (e) => { downPt = { x: e.clientX, y: e.clientY }; });
+        renderer.domElement.addEventListener('pointerup', (e) => {
+            if (!downPt || runSimulation) return;
+            const moved = Math.hypot(e.clientX - downPt.x, e.clientY - downPt.y); downPt = null;
+            if (moved > 4 || partGizmo.axis || transformGizmo.axis) return;
+            const r = renderer.domElement.getBoundingClientRect();
+            const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+            const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
+            const hit = (obj) => { if (!obj.visible) return false; const b = new THREE.Box3().setFromObject(obj); return !b.isEmpty() && ray.ray.intersectBox(b, new THREE.Vector3()) !== null; };
+            if (hasTool() && hit(gunMesh)) selectPart('tool'); else if (hasJig() && hit(jigMesh)) selectPart('jig'); else selectPart(null);
+        });
+
+        // numeric fields
+        function mkGrid(id, items) {
+            const g = $(id); g.innerHTML = '';
+            items.forEach(([key, label]) => { const d = document.createElement('div'); d.innerHTML = '<label>' + label + '</label><input type="number" step="any" id="f-' + key + '">'; g.appendChild(d); });
+        }
+        mkGrid('g-tool', [['tx', 'X mm'], ['ty', 'Y mm'], ['tz', 'Z mm'], ['rx', 'Rx °'], ['ry', 'Ry °'], ['rz', 'Rz °']]);
+        mkGrid('g-jig', [['jx', 'X m'], ['jy', 'Y m'], ['jz', 'Z m'], ['jrx', 'Rx °'], ['jry', 'Ry °'], ['jrz', 'Rz °']]);
+        const FIELDS = ['tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'jx', 'jy', 'jz', 'jrx', 'jry', 'jrz'];
+        function syncFields() {
+            if (!$('pane-layout').classList.contains('active')) return;
+            const jr = new THREE.Euler().setFromQuaternion(jigMesh.quaternion, 'XYZ');
+            const v = { tx: data.toolOffsetX * 1000, ty: data.toolOffsetY * 1000, tz: data.toolOffsetZ * 1000, rx: data.toolRotX * R2D, ry: data.toolRotY * R2D, rz: data.toolRotZ * R2D, jx: data.jigX, jy: data.jigY, jz: data.jigZ, jrx: jr.x * R2D, jry: jr.y * R2D, jrz: jr.z * R2D };
+            FIELDS.forEach(k => { const el = $('f-' + k); if (el && document.activeElement !== el) el.value = (+v[k]).toFixed(k[0] === 'j' && k.length === 2 ? 3 : 1); });
+        }
+        setInterval(syncFields, 200);
+        FIELDS.forEach(k => $('f-' + k).addEventListener('change', () => {
+            const n = parseFloat($('f-' + k).value); if (isNaN(n)) return;
+            if (k === 'tx') data.toolOffsetX = n / 1000; if (k === 'ty') data.toolOffsetY = n / 1000; if (k === 'tz') data.toolOffsetZ = n / 1000;
+            if (k === 'rx') data.toolRotX = n * D2R; if (k === 'ry') data.toolRotY = n * D2R; if (k === 'rz') data.toolRotZ = n * D2R;
+            if (k === 'jx') data.jigX = n; if (k === 'jy') data.jigY = n; if (k === 'jz') data.jigZ = n;
+            if (k[0] === 'j' && k[1] === 'r') {
+                const e = new THREE.Euler().setFromQuaternion(jigMesh.quaternion, 'XYZ');
+                if (k === 'jrx') e.x = n * D2R; if (k === 'jry') e.y = n * D2R; if (k === 'jrz') e.z = n * D2R;
+                jigMesh.quaternion.setFromEuler(e);
+            }
+            refreshSceneDisplay(false); saveLayout();
+        }));
+        $('btn-snap').addEventListener('click', () => { data.toolOffsetX = data.toolOffsetY = data.toolOffsetZ = 0; data.toolRotX = data.toolRotY = data.toolRotZ = 0; refreshSceneDisplay(false); saveLayout(); toast('Tool snapped to the flange'); });
+        function cadMesh() { return internalJigContent.children[0]; }
+        $('btn-cadx').addEventListener('click', () => { const m = cadMesh(); if (m) { m.rotation.x += Math.PI / 2; saveLayout(); } else toast('No jig loaded'); });
+        $('btn-cady').addEventListener('click', () => { const m = cadMesh(); if (m) { m.rotation.y += Math.PI / 2; saveLayout(); } else toast('No jig loaded'); });
+
+        // remember layout per robot (browser localStorage; harmless if blocked)
+        const LKEY = 'olp.layout.' + data.profileName;
+        function saveLayout() {
+            try {
+                const m = cadMesh();
+                localStorage.setItem(LKEY, JSON.stringify({ to: [data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ], tr: [data.toolRotX, data.toolRotY, data.toolRotZ], jp: [data.jigX, data.jigY, data.jigZ], jq: jigMesh.quaternion.toArray(), cx: m ? m.rotation.x : null, cy: m ? m.rotation.y : null }));
+            } catch (e) { }
+        }
+        function loadLayout() {
+            try {
+                const s = localStorage.getItem(LKEY); if (!s) return; const d = JSON.parse(s);
+                [data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ] = d.to; [data.toolRotX, data.toolRotY, data.toolRotZ] = d.tr;
+                [data.jigX, data.jigY, data.jigZ] = d.jp; jigMesh.quaternion.fromArray(d.jq);
+                const m = cadMesh(); if (m && d.cx !== null) { m.rotation.x = d.cx; m.rotation.y = d.cy; }
+            } catch (e) { }
+        }
+        $('btn-lay-reset').addEventListener('click', () => {
+            try { localStorage.removeItem(LKEY); } catch (e) { }
+            data.toolOffsetX = data.toolOffsetY = data.toolOffsetZ = 0; data.toolRotX = data.toolRotY = data.toolRotZ = 0;
+            data.jigX = 1.6; data.jigY = 0; data.jigZ = 0.55; jigMesh.quaternion.set(0, 0, 0, 1);
+            const m = cadMesh(); if (m) { m.rotation.x = data.rotX; m.rotation.y = data.rotY; }
+            refreshSceneDisplay(false); toast('Layout reset');
+        });
+        loadLayout();
 
         refreshSceneDisplay(true); updateUIElements(); animate();
     </script>
