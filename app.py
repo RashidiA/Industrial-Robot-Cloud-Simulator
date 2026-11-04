@@ -1668,13 +1668,14 @@ def build_embedded_viewport(payload):
 
         /* ======================= SAVE / LOAD (browser localStorage, per station set-up) ======================= */
         const SKEY = 'olp.station.v3';
-        const SIG = data.robots.map(r => r.profile + '|' + (r.toolKey ? r.toolName : '')).join(',');
-        function saveStation() {
+                function saveStation() {
             try {
                 commitRobot(activeR); const m = cadMesh();
+                let old = []; try { const o = JSON.parse(localStorage.getItem(SKEY) || '{}'); old = o.robots || []; } catch (e) { }
+                const robots = stationRobots.map(R => ({ p: R.profile, tn: R.toolName, base: { x: R.root.position.x, y: R.root.position.y, z: R.root.position.z, yaw: R.root.rotation.z }, tool: R.tool, angles: R.angles, traj: R.traj }));
+                for (let i = robots.length; i < old.length; i++) robots.push(old[i]);      // keep robots that are switched off in Setup, so they come back as they were
                 localStorage.setItem(SKEY, JSON.stringify({
-                    sig: SIG, e1: e1Global, seq: SEQ,
-                    robots: stationRobots.map(R => ({ base: { x: R.root.position.x, y: R.root.position.y, z: R.root.position.z, yaw: R.root.rotation.z }, tool: R.tool, angles: R.angles, traj: R.traj })),
+                    e1: e1Global, seq: SEQ, robots: robots,
                     jig: { p: [data.jigX, data.jigY, data.jigZ], q: jigMesh.quaternion.toArray(), cx: m ? m.rotation.x : null, cy: m ? m.rotation.y : null }
                 }));
             } catch (e) { }
@@ -1683,9 +1684,13 @@ def build_embedded_viewport(payload):
             try {
                 const s = localStorage.getItem(SKEY); if (!s) return; const d = JSON.parse(s);
                 if (d.jig) { [data.jigX, data.jigY, data.jigZ] = d.jig.p; jigMesh.quaternion.fromArray(d.jig.q); const m = cadMesh(); if (m && d.jig.cx !== null) { m.rotation.x = d.jig.cx; m.rotation.y = d.jig.cy; } }
-                if (d.sig !== SIG) return;                       // robots or tools changed in Setup: keep only the jig layout
-                e1Global = d.e1 || 0; SEQ = d.seq || [];
-                d.robots.forEach((rs, i) => { const R = stationRobots[i]; if (!R) return; R.root.position.set(rs.base.x, rs.base.y, rs.base.z); R.root.rotation.z = rs.base.yaw; R.tool = rs.tool; R.angles = rs.angles; R.traj = rs.traj; });
+                e1Global = d.e1 || 0;
+                (d.robots || []).forEach((rs, i) => {            // each robot is restored on its own, so adding robot 2 does not disturb robot 1
+                    const R = stationRobots[i]; if (!R || rs.p !== R.profile) return;
+                    R.root.position.set(rs.base.x, rs.base.y, rs.base.z); R.root.rotation.z = rs.base.yaw;
+                    if (rs.tn === R.toolName) { R.tool = rs.tool; R.angles = rs.angles; R.traj = rs.traj; }   // tool offset and program only if the same tool is still chosen
+                });
+                SEQ = (d.seq || []).map(st => { if (st.r) { const r = stationRobots.map((_, k) => st.r[k] ? 1 : 0); st.r = r; } return st; });
                 bindRobot(activeR);
             } catch (e) { }
         }
