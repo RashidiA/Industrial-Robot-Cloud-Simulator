@@ -350,6 +350,9 @@ def build_embedded_viewport(payload):
         .learn h4 { margin: 14px 0 4px; color: var(--acc); font-size: 12px; }
         .learn p { margin: 0 0 6px; color: #c3c9d4; line-height: 1.55; }
         #parttools { position: absolute; top: 52px; left: 10px; z-index: 10; display: none; background: rgba(20,22,28,.9); border: 1px solid var(--acc); color: #fff; padding: 5px 10px; border-radius: 8px; font-size: 12px; }
+        #parttools .ptrow { display: flex; gap: 4px; margin-top: 6px; }
+        #parttools .mode-btn { padding: 6px 8px; white-space: nowrap; }
+        #tool-only { display: none; }
         .node.sel { background: rgba(255,152,0,.18); outline: 1px solid var(--acc); }
         .node.pick { cursor: pointer; }
         .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
@@ -412,7 +415,7 @@ def build_embedded_viewport(payload):
             <div id="viewbtns">
                 <button class="tbtn" data-view="iso">Iso</button><button class="tbtn" data-view="front">Front</button><button class="tbtn" data-view="side">Side</button><button class="tbtn" data-view="top">Top</button><button class="tbtn" data-view="fit">Fit</button>
             </div>
-            <div id="parttools"><span id="pt-name"></span></div>
+            <div id="parttools"><div id="pt-name"></div><div class="ptrow"><button class="mode-btn pt-move">⤢ Move (W)</button><button class="mode-btn pt-rot">⟳ Rotate (E)</button><button class="mode-btn pt-space">Space: World (Q)</button></div><div class="ptrow" id="tool-only"><button class="mode-btn" id="pt-snap">Snap 90°: ON</button><button class="mode-btn rot90" data-ax="x">+90° X</button><button class="mode-btn rot90" data-ax="y">+90° Y</button><button class="mode-btn rot90" data-ax="z">+90° Z</button><button class="mode-btn" id="pt-round">Round to 90°</button></div></div>
             <div id="status">WebGL Processing...</div>
             <div id="warn"><span class="pill" id="pill-lim">Joint limits OK</span><span class="pill" id="pill-reach">Within reach</span></div>
             <div id="toast"></div>
@@ -470,9 +473,9 @@ def build_embedded_viewport(payload):
             <div class="pane" id="pane-layout">
                 <div class="note" style="margin:0 0 8px">Click the <b>Tool</b> or the <b>Jig</b> in the 3D view (or in the Station list) to select it. Coloured arrows show its X (red), Y (green) and Z (blue) axes. Drag an arrow to move it, or switch to Rotate and drag a ring.</div>
                 <div class="mode-container">
-                    <button class="mode-btn" id="pt-move">Move (W)</button>
-                    <button class="mode-btn" id="pt-rot">Rotate (E)</button>
-                    <button class="mode-btn" id="pt-space">Space: World (Q)</button>
+                    <button class="mode-btn pt-move">Move (W)</button>
+                    <button class="mode-btn pt-rot">Rotate (E)</button>
+                    <button class="mode-btn pt-space">Space: World (Q)</button>
                 </div>
                 <div class="row"><button class="tbtn" data-sel="tool">🔧 Select tool</button><button class="tbtn" data-sel="jig">⚙ Select jig</button><button class="tbtn" data-sel="">Deselect</button></div>
                 <div class="h" style="margin-left:0">Tool relative to flange A6</div>
@@ -1303,7 +1306,7 @@ def build_embedded_viewport(payload):
             partGizmo.visible = !!name; partGizmo.enabled = !!name; partAxes.visible = !!name;
             document.querySelectorAll('.node.pick').forEach(n => n.classList.toggle('sel', n.dataset.part === name));
             $('parttools').style.display = name ? 'block' : 'none';
-            $('pt-name').innerText = name === 'tool' ? '🔧 Tool selected: moves with the flange' : name === 'jig' ? '⚙ Jig selected' : '';
+            $('pt-name').innerText = name === 'tool' ? '🔧 Tool selected (moves with the flange)' : name === 'jig' ? '⚙ Jig selected' : '';
             applyGizmoVisibility();
         }
         function applyGizmoVisibility() {
@@ -1337,11 +1340,11 @@ def build_embedded_viewport(payload):
 
         // move / rotate / space
         let gSpace = 'world';
-        function setGizmoMode(m) { partGizmo.setMode(m); $('pt-move').classList.toggle('active', m === 'translate'); $('pt-rot').classList.toggle('active', m === 'rotate'); }
-        function toggleSpace() { gSpace = gSpace === 'world' ? 'local' : 'world'; partGizmo.setSpace(gSpace); $('pt-space').innerText = 'Space: ' + (gSpace === 'world' ? 'World' : 'Local') + ' (Q)'; }
-        $('pt-move').addEventListener('click', () => setGizmoMode('translate'));
-        $('pt-rot').addEventListener('click', () => setGizmoMode('rotate'));
-        $('pt-space').addEventListener('click', toggleSpace);
+        function setGizmoMode(m) { partGizmo.setMode(m); document.querySelectorAll('.pt-move').forEach(b => b.classList.toggle('active', m === 'translate')); document.querySelectorAll('.pt-rot').forEach(b => b.classList.toggle('active', m === 'rotate')); }
+        function toggleSpace() { gSpace = gSpace === 'world' ? 'local' : 'world'; partGizmo.setSpace(gSpace); document.querySelectorAll('.pt-space').forEach(b => b.innerText = 'Space: ' + (gSpace === 'world' ? 'World' : 'Local') + ' (Q)'); }
+        document.querySelectorAll('.pt-move').forEach(b => b.addEventListener('click', () => setGizmoMode('translate')));
+        document.querySelectorAll('.pt-rot').forEach(b => b.addEventListener('click', () => setGizmoMode('rotate')));
+        document.querySelectorAll('.pt-space').forEach(b => b.addEventListener('click', toggleSpace));
         setGizmoMode('translate');
         document.querySelectorAll('[data-sel]').forEach(b => b.addEventListener('click', () => selectPart(b.dataset.sel)));
         document.querySelectorAll('.node.pick').forEach(n => n.addEventListener('click', () => selectPart(n.dataset.part)));
@@ -1421,6 +1424,35 @@ def build_embedded_viewport(payload):
             refreshSceneDisplay(false); toast('Layout reset');
         });
         loadLayout();
+
+        /* ---- easier tool matching: 90-degree snap, +90 buttons in the flange frame, round-off ---- */
+        let snapOn = true;
+        function applySnap() {
+            const on = selPart === 'tool' && snapOn;
+            partGizmo.setRotationSnap(on ? Math.PI / 2 : null); partGizmo.setTranslationSnap(on ? 0.01 : null);
+            $('pt-snap').innerText = 'Snap 90°: ' + (snapOn ? 'ON' : 'OFF'); $('pt-snap').classList.toggle('active', snapOn);
+            $('tool-only').style.display = selPart === 'tool' ? 'flex' : 'none';
+        }
+        $('pt-snap').addEventListener('click', () => { snapOn = !snapOn; applySnap(); });
+        const _selectPart = selectPart;
+        selectPart = function (n) { _selectPart(n); applySnap(); };
+        function toolLocalQuat() { return new THREE.Quaternion().setFromEuler(new THREE.Euler(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ')); }
+        function setToolLocalQuat(q) { const e = new THREE.Euler().setFromQuaternion(q, 'XYZ'); data.toolRotX = e.x; data.toolRotY = e.y; data.toolRotZ = e.z; refreshSceneDisplay(false); saveLayout(); }
+        document.querySelectorAll('.rot90').forEach(b => b.addEventListener('click', () => {
+            const ax = b.dataset.ax === 'x' ? new THREE.Vector3(1, 0, 0) : b.dataset.ax === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
+            setToolLocalQuat(new THREE.Quaternion().setFromAxisAngle(ax, Math.PI / 2).multiply(toolLocalQuat()));   // turned about the flange (A6) axes
+        }));
+        function snapQuat90(q) {   // nearest of the 24 axis-aligned orientations
+            const m = new THREE.Matrix4().makeRotationFromQuaternion(q), e = m.elements;
+            const col = (i) => new THREE.Vector3(e[i * 4], e[i * 4 + 1], e[i * 4 + 2]);
+            const dom = (v, skip) => { let best = -1, bi = 0; ['x', 'y', 'z'].forEach((k, i) => { if (skip.includes(i)) return; if (Math.abs(v[k]) > best) { best = Math.abs(v[k]); bi = i; } }); const o = new THREE.Vector3(); o.setComponent(bi, Math.sign(v.getComponent(bi)) || 1); return [o, bi]; };
+            const [a0, i0] = dom(col(0), []); const [a1] = dom(col(1), [i0]); const a2 = new THREE.Vector3().crossVectors(a0, a1);
+            return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(a0, a1, a2));
+        }
+        function roundTool(msg) { setToolLocalQuat(snapQuat90(toolLocalQuat())); if (msg) toast('Tool rotation rounded to the nearest 90°'); }
+        $('pt-round').addEventListener('click', () => roundTool(true));
+        partGizmo.addEventListener('dragging-changed', (e) => { if (!e.value && selPart === 'tool' && snapOn) roundTool(false); });   // free-turn ring: land on a 90° orientation when released
+        applySnap();
 
         refreshSceneDisplay(true); updateUIElements(); animate();
     </script>
