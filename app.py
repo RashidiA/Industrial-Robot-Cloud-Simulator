@@ -131,7 +131,8 @@ ROBOT_REGISTRY = {
     }
 }
 
-# --- 3. SELECTION INITIALIZATION LAYER (main page; click the header to minimise) ---
+# --- 3. SELECTION INITIALIZATION LAYER (setup panel can be switched off after setting) ---
+SS = st.session_state
 robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
 available_profiles = list(ROBOT_REGISTRY.keys())
 if os.path.exists(robot_folder_path):
@@ -143,73 +144,105 @@ first_profile_idx = available_profiles.index("ABB_6700") if "ABB_6700" in availa
 CATEGORY_MAPPING = {"Nil": None, "Welding Guns": "welding_guns", "Grippers": "grippers", "Welding Torches": "welding_torches"}
 DEFAULT_BASES = [(0.0, 0.0, 0.0, 0.0), (3.2, 0.0, 0.0, np.pi), (1.6, -2.4, 0.0, np.pi / 2), (1.6, 2.4, 0.0, -np.pi / 2)]
 
-show_setup = st.toggle("⚙️ Show Simulation Setup  (switch OFF to hide the panel after setting)", value=True, key="show_setup")
-try:
-    setup_box = st.container(border=True, key="setup_box")      # hidden with CSS when switched off, so every setting is kept
-except TypeError:
-    setup_box = st.expander("⚙️ Simulation Setup", expanded=True)
-if not show_setup:
-    st.markdown("<style>.st-key-setup_box{display:none !important} iframe{height:calc(100vh - 110px) !important;min-height:640px}</style>", unsafe_allow_html=True)
-with setup_box:
-    top_a, top_b = st.columns([1, 2])
-    with top_a:
-        st.write("**🏭 Station**")
-        n_robots = int(st.number_input("Number of robots (max 4)", min_value=1, max_value=4, value=1, step=1, key="n_robots"))
-        if st.button("🔴 RESET TOOLS & JIG", use_container_width=True):
-            for f in [os.path.join(TEMP_DIR, "jig.stl")] + [os.path.join(TEMP_DIR, f"gun_{k}.stl") for k in range(4)]:
-                if os.path.exists(f):
-                    try: os.remove(f)
-                    except: pass
-            st.session_state.program = []
-            st.session_state.j_angles = [0.0] * 8
-            st.cache_data.clear()
-            st.cache_resource.clear()
-            st.query_params.clear()
-            st.rerun()
-    with top_b:
-        st.write("**🏗️ Rotary Positioning Jig (shared by all robots)**")
-        jc1, jc2 = st.columns([2, 1])
-        with jc1:
-            up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
-        with jc2:
-            js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
-        if up_jig:
-            with open(os.path.join(TEMP_DIR, "jig.stl"), "wb") as f:
-                f.write(up_jig.getbuffer())
-            st.cache_data.clear()
-    st.write("**🧱 Fixtures, fences & other objects (optional)**")
-    up_objs = st.file_uploader("Upload fixtures, fences, tables or any other STL files (up to 8)", type=["stl"], accept_multiple_files=True, key="obj_up")
-    st.caption("Tip: click a robot, its tool or the jig in the 3D view to move it. Use the Layout tab for exact numbers and the Station tab to build the sequence.")
+# Streamlit forgets a widget's value when the widget is not drawn. Re-saving the values keeps every setting
+# while the setup panel is hidden.
+for _k in ["n_robots", "jig_scale"] + [f"{p}_{i}" for i in range(4) for p in ("robot_profile", "tool_src", "tool_cat", "tool_model")]:
+    if _k in SS:
+        SS[_k] = SS[_k]
 
-    robot_tabs = st.tabs([f"🤖 Robot {k + 1}" for k in range(n_robots)])
-    robot_cfgs = []
-    for k, rtab in enumerate(robot_tabs):
-        with rtab:
-            rc1, rc2 = st.columns([1, 2])
-            with rc1:
-                profile_k = st.selectbox(f"Robot {k + 1} hardware profile", options=available_profiles,
-                                         index=(first_profile_idx + k) % len(available_profiles), key=f"robot_profile_{k}")
-            tool_path_k = None
-            with rc2:
-                tool_source = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"], horizontal=True, key=f"tool_src_{k}")
-                if tool_source == "Internal Library":
-                    cat = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()), key=f"tool_cat_{k}")
-                    if cat != "Nil":
-                        scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", CATEGORY_MAPPING[cat])
-                        found = [f for f in os.listdir(scan_path) if f.lower().endswith('.stl')] if os.path.exists(scan_path) else []
-                        if found:
-                            chosen = st.selectbox("Select Tooling Model", options=found, key=f"tool_model_{k}")
-                            tool_path_k = os.path.join(scan_path, chosen)
-                        else:
-                            st.caption("⚠️ No internal library templates found. Please upload an external file.")
-                else:
-                    up_gun = st.file_uploader("Upload Custom External Tool STL", type=["stl"], key=f"gun_up_{k}")
-                    if up_gun:
-                        tool_path_k = os.path.join(TEMP_DIR, f"gun_{k}.stl")
-                        with open(tool_path_k, "wb") as f:
-                            f.write(up_gun.getbuffer())
-                        st.cache_data.clear()
-            robot_cfgs.append({"profile": profile_k, "tool_path": tool_path_k})
+show_setup = st.toggle("⚙️ Show Simulation Setup  (switch OFF to hide the panel after setting)", value=True, key="show_setup")
+if not show_setup:
+    st.markdown("<style>iframe{height:calc(100vh - 110px) !important;min-height:640px}</style>", unsafe_allow_html=True)
+
+if show_setup:
+    with st.container(border=True):
+        top_a, top_b = st.columns([1, 2])
+        with top_a:
+            st.write("**🏭 Station**")
+            st.number_input("Number of robots (max 4)", min_value=1, max_value=4, value=1, step=1, key="n_robots")
+            if st.button("🔴 RESET TOOLS & JIG", use_container_width=True):
+                for f in [os.path.join(TEMP_DIR, "jig.stl")] + [os.path.join(TEMP_DIR, f"gun_{k}.stl") for k in range(4)] + [os.path.join(TEMP_DIR, f"obj_{k}.stl") for k in range(8)]:
+                    if os.path.exists(f):
+                        try: os.remove(f)
+                        except: pass
+                SS["obj_names"] = []
+                st.session_state.program = []
+                st.session_state.j_angles = [0.0] * 8
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.query_params.clear()
+                st.rerun()
+        with top_b:
+            st.write("**🏗️ Rotary Positioning Jig (shared by all robots)**")
+            jc1, jc2 = st.columns([2, 1])
+            with jc1:
+                up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
+            with jc2:
+                st.number_input("Jig Geometry Scale", value=0.001, format="%.5f", key="jig_scale")
+            if up_jig:
+                with open(os.path.join(TEMP_DIR, "jig.stl"), "wb") as f:
+                    f.write(up_jig.getbuffer())
+                st.cache_data.clear()
+        st.write("**🧱 Fixtures, fences & other objects (optional)**")
+        up_objs = st.file_uploader("Upload fixtures, fences, tables or any other STL files (up to 8)", type=["stl"], accept_multiple_files=True, key="obj_up")
+        st.caption("Tip: click a robot, its tool, the jig or an object in the 3D view to move it. Use the Layout tab for exact numbers and the Station tab to build the sequence.")
+        # objects are stored on disk, so they stay when this panel is hidden
+        for _i in range(8):
+            _p = os.path.join(TEMP_DIR, f"obj_{_i}.stl")
+            if os.path.exists(_p):
+                try: os.remove(_p)
+                except: pass
+        SS["obj_names"] = []
+        for _i, _uf in enumerate((up_objs or [])[:8]):
+            with open(os.path.join(TEMP_DIR, f"obj_{_i}.stl"), "wb") as f:
+                f.write(_uf.getvalue())
+            SS["obj_names"].append(os.path.splitext(_uf.name)[0])
+
+        robot_tabs = st.tabs([f"🤖 Robot {k + 1}" for k in range(int(SS.get("n_robots", 1)))])
+        for k, rtab in enumerate(robot_tabs):
+            with rtab:
+                rc1, rc2 = st.columns([1, 2])
+                with rc1:
+                    st.selectbox(f"Robot {k + 1} hardware profile", options=available_profiles,
+                                 index=(first_profile_idx + k) % len(available_profiles), key=f"robot_profile_{k}")
+                with rc2:
+                    src_k = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"], horizontal=True, key=f"tool_src_{k}")
+                    if src_k == "Internal Library":
+                        cat = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()), key=f"tool_cat_{k}")
+                        if cat != "Nil":
+                            scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", CATEGORY_MAPPING[cat])
+                            found = [f for f in os.listdir(scan_path) if f.lower().endswith('.stl')] if os.path.exists(scan_path) else []
+                            if found:
+                                st.selectbox("Select Tooling Model", options=found, key=f"tool_model_{k}")
+                            else:
+                                st.caption("⚠️ No internal library templates found. Please upload an external file.")
+                    else:
+                        up_gun = st.file_uploader("Upload Custom External Tool STL", type=["stl"], key=f"gun_up_{k}")
+                        if up_gun:
+                            with open(os.path.join(TEMP_DIR, f"gun_{k}.stl"), "wb") as f:
+                                f.write(up_gun.getbuffer())
+                            st.cache_data.clear()
+
+# ---- read the settings back (works whether the panel is shown or hidden) ----
+n_robots = int(SS.get("n_robots", 1))
+js_scale = float(SS.get("jig_scale", 0.001))
+robot_cfgs = []
+for k in range(n_robots):
+    prof_k = SS.get(f"robot_profile_{k}", available_profiles[(first_profile_idx + k) % len(available_profiles)])
+    if prof_k not in available_profiles:
+        prof_k = available_profiles[(first_profile_idx + k) % len(available_profiles)]
+    tool_path_k = None
+    if SS.get(f"tool_src_{k}", "Internal Library") == "Internal Library":
+        cat_k = SS.get(f"tool_cat_{k}", "Nil")
+        if cat_k in CATEGORY_MAPPING and CATEGORY_MAPPING[cat_k]:
+            cand = os.path.join(BASE_DIR, "assets", "robot_tools", CATEGORY_MAPPING[cat_k], str(SS.get(f"tool_model_{k}", "")))
+            if os.path.isfile(cand):
+                tool_path_k = cand
+    else:
+        cand = os.path.join(TEMP_DIR, f"gun_{k}.stl")
+        if os.path.isfile(cand):
+            tool_path_k = cand
+    robot_cfgs.append({"profile": prof_k, "tool_path": tool_path_k})
 selected_profile = robot_cfgs[0]["profile"]
 
 active_cfg = ROBOT_REGISTRY.get(selected_profile, ROBOT_REGISTRY["ABB_6700"])
@@ -390,6 +423,10 @@ def build_embedded_viewport(payload):
         #ctxmenu .citem:hover { background: var(--panel2); }
         #ctxmenu .citem.on { background: rgba(255,152,0,.2); color: var(--acc); }
         #ctxmenu .citem i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+        #main.nt { grid-template-columns: minmax(0, 1fr) 340px; } #main.nt #tree { display: none; }
+        #main.ns { grid-template-columns: 210px minmax(0, 1fr); } #main.ns #side { display: none; }
+        #main.nt.ns { grid-template-columns: minmax(0, 1fr); }
+        @media (max-width: 900px) { #main.ns { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); } #main.nt { grid-template-columns: 1fr; } }
         /* ---------- status bar ---------- */
         #statusbar { display: flex; gap: 14px; align-items: center; padding: 0 12px; background: #0a0c10; border-top: 1px solid var(--line); font-family: Consolas, monospace; font-size: 11px; color: var(--mut); white-space: nowrap; overflow: hidden; }
         #statusbar b { color: var(--cy); font-weight: 600; }
@@ -446,6 +483,7 @@ def build_embedded_viewport(payload):
         <div id="view">
             <div id="canvas-container"></div>
             <div id="viewbtns">
+                <button class="tbtn" id="btn-tree" title="Hide / show the Station panel (B)">◧ Panel</button><button class="tbtn" id="btn-side" title="Hide / show the Jog panel (N)">Panel ◨</button><button class="tbtn" id="btn-focus" title="Hide both panels: full-screen cell (F11 not needed)">⛶ Focus</button>
                 <button class="tbtn" data-view="iso">Iso</button><button class="tbtn" data-view="front">Front</button><button class="tbtn" data-view="side">Side</button><button class="tbtn" data-view="top">Top</button><button class="tbtn" data-view="fit">Fit</button>
             </div>
             <div id="parttools"><div id="pt-name"></div><div class="ptrow"><button class="mode-btn pt-move">⤢ Move (W)</button><button class="mode-btn pt-rot">⟳ Rotate (E)</button><button class="mode-btn pt-space">Space: World (Q)</button></div><div class="ptrow" id="tool-only"><button class="mode-btn" id="pt-snap">Snap 90°: ON</button><button class="mode-btn rot90" data-ax="x">+90° X</button><button class="mode-btn rot90" data-ax="y">+90° Y</button><button class="mode-btn rot90" data-ax="z">+90° Z</button><button class="mode-btn" id="pt-round">Round to 90°</button></div></div>
@@ -1821,6 +1859,20 @@ def build_embedded_viewport(payload):
         });
         window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtx(); });
 
+        /* ---------- hide / show the side panels to enlarge the cell view ---------- */
+        function setPanels(nt, ns) {
+            $('main').classList.toggle('nt', nt); $('main').classList.toggle('ns', ns);
+            $('btn-tree').classList.toggle('active', nt); $('btn-side').classList.toggle('active', ns); $('btn-focus').classList.toggle('active', nt && ns);
+            try { localStorage.setItem('olp.panels', (nt ? '1' : '0') + (ns ? '1' : '0')); } catch (e) { }
+            window.dispatchEvent(new Event('resize'));
+        }
+        const panelState = () => [$('main').classList.contains('nt'), $('main').classList.contains('ns')];
+        $('btn-tree').addEventListener('click', () => { const [a, b] = panelState(); setPanels(!a, b); });
+        $('btn-side').addEventListener('click', () => { const [a, b] = panelState(); setPanels(a, !b); });
+        $('btn-focus').addEventListener('click', () => { const [a, b] = panelState(); setPanels(!(a && b), !(a && b)); });
+        window.addEventListener('keydown', (e) => { if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return; const k = e.key.toLowerCase(); if (k === 'b') $('btn-tree').click(); else if (k === 'n') $('btn-side').click(); });
+        try { const s = localStorage.getItem('olp.panels'); if (s) setPanels(s[0] === '1', s[1] === '1'); } catch (e) { }
+
         // ---------- init ----------
         buildTree(); setGizmoMode('translate'); applySnap();
         loadStation();
@@ -1870,11 +1922,11 @@ for k, cfg in enumerate(robot_cfgs):
                            "base": {"x": bx, "y": by, "z": bz, "yaw": float(byaw)}})
 
 objects_payload = []
-for uf in (up_objs or [])[:8]:
-    try:
-        objects_payload.append({"name": os.path.splitext(uf.name)[0], "data": base64.b64encode(uf.getvalue()).decode("utf-8")})
-    except Exception:
-        pass
+for _i, _name in enumerate(SS.get("obj_names", [])[:8]):
+    _p = os.path.join(TEMP_DIR, f"obj_{_i}.stl")
+    if os.path.isfile(_p):
+        with open(_p, "rb") as _f:
+            objects_payload.append({"name": _name, "data": base64.b64encode(_f.read()).decode("utf-8")})
 
 scene_payload = {
     "objects": objects_payload,
