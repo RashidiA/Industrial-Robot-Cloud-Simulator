@@ -131,19 +131,78 @@ ROBOT_REGISTRY = {
     }
 }
 
-# --- 3. SELECTION INITIALIZATION LAYER (now on the main page, click the header to minimise) ---
+# --- 3. SELECTION INITIALIZATION LAYER (main page; click the header to minimise) ---
+robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
+available_profiles = list(ROBOT_REGISTRY.keys())
+if os.path.exists(robot_folder_path):
+    scanned_folders = [f for f in os.listdir(robot_folder_path) if os.path.isdir(os.path.join(robot_folder_path, f))]
+    if scanned_folders:
+        available_profiles = sorted(list(set(scanned_folders + available_profiles)))
+first_profile_idx = available_profiles.index("ABB_6700") if "ABB_6700" in available_profiles else 0
+
+CATEGORY_MAPPING = {"Nil": None, "Welding Guns": "welding_guns", "Grippers": "grippers", "Welding Torches": "welding_torches"}
+DEFAULT_BASES = [(0.0, 0.0, 0.0, 0.0), (3.2, 0.0, 0.0, np.pi), (1.6, -2.4, 0.0, np.pi / 2), (1.6, 2.4, 0.0, -np.pi / 2)]
+
 setup_box = st.expander("⚙️ Simulation Setup  (click here to minimise after setting)", expanded=True)
 with setup_box:
-    sc1, sc2, sc3 = st.columns([1, 1.3, 1.3])
-    with sc1:
-        st.write("**🤖 Robot**")
-        robot_folder_path = os.path.join(BASE_DIR, "assets", "robots")
-        available_profiles = list(ROBOT_REGISTRY.keys())
-        if os.path.exists(robot_folder_path):
-            scanned_folders = [f for f in os.listdir(robot_folder_path) if os.path.isdir(os.path.join(robot_folder_path, f))]
-            if scanned_folders:
-                available_profiles = sorted(list(set(scanned_folders + available_profiles)))
-        selected_profile = st.selectbox("Select Active Hardware Profile", options=available_profiles, key="robot_profile_selection")
+    top_a, top_b = st.columns([1, 2])
+    with top_a:
+        st.write("**🏭 Station**")
+        n_robots = int(st.number_input("Number of robots (max 4)", min_value=1, max_value=4, value=1, step=1, key="n_robots"))
+        if st.button("🔴 RESET TOOLS & JIG", use_container_width=True):
+            for f in [os.path.join(TEMP_DIR, "jig.stl")] + [os.path.join(TEMP_DIR, f"gun_{k}.stl") for k in range(4)]:
+                if os.path.exists(f):
+                    try: os.remove(f)
+                    except: pass
+            st.session_state.program = []
+            st.session_state.j_angles = [0.0] * 8
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            st.query_params.clear()
+            st.rerun()
+    with top_b:
+        st.write("**🏗️ Rotary Positioning Jig (shared by all robots)**")
+        jc1, jc2 = st.columns([2, 1])
+        with jc1:
+            up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
+        with jc2:
+            js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
+        if up_jig:
+            with open(os.path.join(TEMP_DIR, "jig.stl"), "wb") as f:
+                f.write(up_jig.getbuffer())
+            st.cache_data.clear()
+    st.caption("Tip: click a robot, its tool or the jig in the 3D view to move it. Use the Layout tab for exact numbers and the Station tab to build the sequence.")
+
+    robot_tabs = st.tabs([f"🤖 Robot {k + 1}" for k in range(n_robots)])
+    robot_cfgs = []
+    for k, rtab in enumerate(robot_tabs):
+        with rtab:
+            rc1, rc2 = st.columns([1, 2])
+            with rc1:
+                profile_k = st.selectbox(f"Robot {k + 1} hardware profile", options=available_profiles,
+                                         index=(first_profile_idx + k) % len(available_profiles), key=f"robot_profile_{k}")
+            tool_path_k = None
+            with rc2:
+                tool_source = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"], horizontal=True, key=f"tool_src_{k}")
+                if tool_source == "Internal Library":
+                    cat = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()), key=f"tool_cat_{k}")
+                    if cat != "Nil":
+                        scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", CATEGORY_MAPPING[cat])
+                        found = [f for f in os.listdir(scan_path) if f.lower().endswith('.stl')] if os.path.exists(scan_path) else []
+                        if found:
+                            chosen = st.selectbox("Select Tooling Model", options=found, key=f"tool_model_{k}")
+                            tool_path_k = os.path.join(scan_path, chosen)
+                        else:
+                            st.caption("⚠️ No internal library templates found. Please upload an external file.")
+                else:
+                    up_gun = st.file_uploader("Upload Custom External Tool STL", type=["stl"], key=f"gun_up_{k}")
+                    if up_gun:
+                        tool_path_k = os.path.join(TEMP_DIR, f"gun_{k}.stl")
+                        with open(tool_path_k, "wb") as f:
+                            f.write(up_gun.getbuffer())
+                        st.cache_data.clear()
+            robot_cfgs.append({"profile": profile_k, "tool_path": tool_path_k})
+selected_profile = robot_cfgs[0]["profile"]
 
 active_cfg = ROBOT_REGISTRY.get(selected_profile, ROBOT_REGISTRY["ABB_6700"])
 
@@ -197,58 +256,9 @@ if "event" in query_params:
         st.session_state.j_angles = [0.0] * 7 + [st.session_state.j_angles[7]]
     st.query_params.clear()
 
-# --- 6. OPERATOR INTERFACE CONTROLS ---
-t_off_x = t_off_y = t_off_z = 0.0          # tool offset and rotation are now set by dragging the tool in the 3D view (Layout tab)
-t_rot_x = t_rot_y = t_rot_z = 0
-jx_pos, jy_pos, jz_pos = 1.6, 0.0, 0.55    # jig position is now set by dragging the jig in the 3D view
+# --- 6. (controls now live in the Simulation Setup panel above) ---
+jx_pos, jy_pos, jz_pos = 1.6, 0.0, 0.55
 j_rot_x = j_rot_y = 0
-selected_tool_path = None
-with sc1:
-    if st.button("🔴 RESET TOOL & JIG", use_container_width=True):
-        for f in [os.path.join(TEMP_DIR, "gun.stl"), os.path.join(TEMP_DIR, "jig.stl")]:
-            if os.path.exists(f):
-                try: os.remove(f)
-                except: pass
-        st.session_state.program = []
-        st.session_state.j_angles = [0.0] * 8
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        st.query_params.clear()
-        st.rerun()
-    st.caption("Tip: move the tool or jig by clicking it in the 3D view. Open the Layout tab for exact numbers.")
-
-with sc2:
-    st.write("**⚙️ End-Effector Tooling**")
-    tool_source = st.radio("Tooling Model Source", options=["Internal Library", "External STL Upload"], horizontal=True)
-    if tool_source == "Internal Library":
-        CATEGORY_MAPPING = {"Nil": None, "Welding Guns": "welding_guns", "Grippers": "grippers", "Welding Torches": "welding_torches"}
-        selected_category = st.selectbox("Select Tool Category Type", options=list(CATEGORY_MAPPING.keys()))
-        if selected_category != "Nil":
-            library_scan_path = os.path.join(BASE_DIR, "assets", "robot_tools", CATEGORY_MAPPING[selected_category])
-            available_tools = []
-            if os.path.exists(library_scan_path):
-                available_tools = [f for f in os.listdir(library_scan_path) if f.lower().endswith('.stl')]
-            if available_tools:
-                selected_tool_file = st.selectbox("Select Tooling Model", options=available_tools)
-                selected_tool_path = os.path.join(library_scan_path, selected_tool_file)
-            else:
-                st.caption("⚠️ No internal library templates found. Please upload an external file.")
-    else:
-        up_gun = st.file_uploader("Upload Custom External Tool STL", type=["stl"], key="gun_up")
-        if up_gun:
-            selected_tool_path = os.path.join(TEMP_DIR, "gun.stl")
-            with open(selected_tool_path, "wb") as f:
-                f.write(up_gun.getbuffer())
-            st.cache_data.clear()
-
-with sc3:
-    st.write("**🏗️ Rotary Positioning Jig**")
-    up_jig = st.file_uploader("Upload Jig STL", type=["stl"], key="jig_up")
-    if up_jig:
-        with open(os.path.join(TEMP_DIR, "jig.stl"), "wb") as f:
-            f.write(up_jig.getbuffer())
-        st.cache_data.clear()
-    js_scale = st.number_input("Jig Geometry Scale", value=0.001, format="%.5f")
 
 if 'jx_pos' not in locals(): jx_pos = 1.6
 if 'jy_pos' not in locals(): jy_pos = 0.0
@@ -314,7 +324,7 @@ def build_embedded_viewport(payload):
         .pill.bad { border-color: #8a2a24; color: #ff8a80; background: rgba(244,67,54,.1); }
         /* ---------- side panel tabs ---------- */
         #tabs { display: flex; border-bottom: 1px solid var(--line); }
-        .tab { flex: 1; text-align: center; padding: 10px 4px; color: var(--mut); cursor: pointer; border-bottom: 2px solid transparent; font-weight: 600; }
+        .tab { flex: 1; text-align: center; padding: 10px 2px; font-size: 12px; color: var(--mut); cursor: pointer; border-bottom: 2px solid transparent; font-weight: 600; }
         .tab.active { color: var(--acc); border-bottom-color: var(--acc); }
         .pane { display: none; padding: 12px; overflow-y: auto; flex: 1; min-height: 0; }
         .pane.active { display: block; }
@@ -339,6 +349,8 @@ def build_embedded_viewport(payload):
         #btn-save-step { background: var(--acc); color: #000; }
         #btn-run-sim { background: var(--ok); color: #fff; }
         #btn-run-sim.stop { background: #c62828; }
+        #btn-seq-run { background: var(--ok); color: #fff; }
+        #btn-seq-run.stop { background: #c62828; }
         #btn-clear-seq { background: #3a2220; color: #ff8a80; border: 1px solid #5a2e2a; }
         #btn-reset-pos { background: #2b3358; color: #cfd6ff; border: 1px solid #3f4a86; }
         .step-counter { font-size: 12px; font-family: Consolas, monospace; text-align: center; color: var(--mut); }
@@ -358,6 +370,11 @@ def build_embedded_viewport(payload):
         .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
         .grid3 label { display: block; color: var(--mut); font-size: 10px; }
         .grid3 input { width: 100%; background: var(--panel2); color: var(--cy); border: 1px solid var(--line); border-radius: 5px; padding: 4px 5px; font-family: Consolas, monospace; font-size: 12px; }
+        .rchip { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; font-size: 11px; color: var(--txt); }
+        .rbadge { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 6px; font-size: 12px; }
+        .rbadge.act { background: rgba(255,152,0,.15); }
+        .node.act .nm { color: var(--acc); font-weight: 700; }
+        tr.seqcur td { background: rgba(76,175,80,.22); }
         /* ---------- status bar ---------- */
         #statusbar { display: flex; gap: 14px; align-items: center; padding: 0 12px; background: #0a0c10; border-top: 1px solid var(--line); font-family: Consolas, monospace; font-size: 11px; color: var(--mut); white-space: nowrap; overflow: hidden; }
         #statusbar b { color: var(--cy); font-weight: 600; }
@@ -395,18 +412,18 @@ def build_embedded_viewport(payload):
     <div id="main">
         <div id="tree">
             <div class="h">Station</div>
-            <div class="node pick" data-part="robot"><span>🦾</span><span class="nm">Robot</span><span class="eye" data-vis="robot">👁</span></div>
-            <div class="node pick" data-part="tool"><span>🔧</span><span class="nm">Tool (on flange)</span><span class="eye" data-vis="tool">👁</span></div>
+            <div id="robot-nodes"></div>
+            <div class="node pick" data-part="tool"><span>🔧</span><span class="nm">Tool of active robot</span><span class="eye" data-vis="tool">👁</span></div>
             <div class="node pick" data-part="jig"><span>⚙</span><span class="nm">Jig / positioner</span><span class="eye" data-vis="jig">👁</span></div>
             <div class="node"><span>▦</span><span class="nm">Floor grid</span><span class="eye" data-vis="grid">👁</span></div>
-            <div class="h">Selected robot</div>
+            <div class="h">Active robot</div>
             <div class="infobox">
                 <div><span>Model</span><b id="inf-model">-</b></div>
                 <div><span>Axes</span>6 + E1 positioner</div>
                 <div><span>Reach</span>~<b id="inf-reach">-</b> m</div>
             </div>
             <div class="h">Program</div>
-            <div class="node" id="node-prog"><span>▶</span><span class="nm">Main program</span><span id="inf-steps" class="chip">0</span></div>
+            <div class="node" id="node-prog"><span>▶</span><span class="nm">Active robot program</span><span id="inf-steps" class="chip">0</span></div>
             <div class="note">Educational models. Link shapes come from your CAD files; use for learning, not for cell sign-off.</div>
         </div>
 
@@ -427,10 +444,11 @@ def build_embedded_viewport(payload):
         </div>
 
         <div id="side">
-            <div id="tabs"><div class="tab active" data-tab="jog">Jog</div><div class="tab" data-tab="prog">Program</div><div class="tab" data-tab="layout">Layout</div><div class="tab" data-tab="learn">Learn</div></div>
+            <div id="tabs"><div class="tab active" data-tab="jog">Jog</div><div class="tab" data-tab="prog">Program</div><div class="tab" data-tab="layout">Layout</div><div class="tab" data-tab="station">Station</div><div class="tab" data-tab="learn">Learn</div></div>
 
             <div class="pane active" id="pane-jog">
               <div id="jog-pendant">
+                <div class="row" id="robot-sel-row"><label>Controlling</label><select id="sel-robot" style="flex:1"></select></div>
                 <div class="mode-container">
                     <button id="mode-joint" class="mode-btn active">Joint</button>
                     <button id="mode-tcp" class="mode-btn">⌖ TCP</button>
@@ -477,7 +495,9 @@ def build_embedded_viewport(payload):
                     <button class="mode-btn pt-rot">Rotate (E)</button>
                     <button class="mode-btn pt-space">Space: World (Q)</button>
                 </div>
-                <div class="row"><button class="tbtn" data-sel="tool">🔧 Select tool</button><button class="tbtn" data-sel="jig">⚙ Select jig</button><button class="tbtn" data-sel="">Deselect</button></div>
+                <div class="row"><button class="tbtn" data-sel="robot">🦾 Select robot</button><button class="tbtn" data-sel="tool">🔧 Select tool</button><button class="tbtn" data-sel="jig">⚙ Select jig</button><button class="tbtn" data-sel="">Deselect</button></div>
+                <div class="h" style="margin-left:0">Robot base position (active robot)</div>
+                <div class="grid3" id="g-base"></div>
                 <div class="h" style="margin-left:0">Tool relative to flange A6</div>
                 <div class="grid3" id="g-tool"></div>
                 <div class="row"><button class="tbtn" id="btn-snap">🧲 Snap tool to flange</button></div>
@@ -488,6 +508,22 @@ def build_embedded_viewport(payload):
                 <div class="note" style="margin-left:0">Your layout is remembered in this browser for each robot.</div>
             </div>
 
+
+            <div class="pane" id="pane-station">
+                <div class="h" style="margin-top:0">Robots in this station</div>
+                <div id="st-robots"></div>
+                <div class="note" style="margin-left:0">Number of robots and their tools are chosen in Simulation Setup above (max 4). Record each robot's program in the Jog tab, then build the station sequence below.</div>
+                <div class="h">Station sequence</div>
+                <div class="row"><select id="seq-kind" style="flex:1"><option value="run">Run robot program(s)</option><option value="home">Send robot(s) home (0°)</option><option value="e1">Turn positioner E1</option><option value="wait">Wait</option></select><button class="tbtn" id="seq-add">+ Add</button></div>
+                <div class="row"><button class="tbtn" id="seq-auto" title="Run R1, then R2, then R3, then R4 one after another">⚡ Auto: one after another</button><button class="tbtn" id="seq-clear">Clear</button></div>
+                <table><tbody id="seq-body"></tbody></table>
+                <div class="note" id="seq-empty" style="margin-left:0">No sequence yet. Tick two or more robots in one "Run" step to make them work at the same time.</div>
+                <div class="action-block">
+                    <button class="btn-action" id="btn-seq-run">▶️ RUN STATION SEQUENCE</button>
+                    <div class="row" style="margin:0"><label><input type="checkbox" id="chk-sloop"> Loop</label><div style="flex:1"></div><span class="step-counter" id="seq-status">Idle</span></div>
+                </div>
+            </div>
+
             <div class="pane learn" id="pane-learn">
                 <h4>Joint jog vs TCP jog</h4><p>Joint mode moves one axis (A1 to A6) at a time. TCP mode lets you drag the tool tip in space; the computer finds the joint angles for you (inverse kinematics).</p>
                 <h4>What is the TCP?</h4><p>The Tool Centre Point is the working point of the tool, for example the tip of the welding electrode. Robot programs store where the TCP must go.</p>
@@ -495,7 +531,7 @@ def build_embedded_viewport(payload):
                 <h4>Singularity</h4><p>When axis A5 is near 0°, axes A4 and A6 line up and the wrist loses one direction of motion. Keep A5 away from 0° in welding moves.</p>
                 <h4>Recording a program</h4><p>Move the robot, press Record, repeat. Run Simulation then blends smoothly from one recorded pose to the next. Use the speed slider to slow it down.</p>
                 <h4>Gesture mode</h4><p>Hold your palm in the box for 2 seconds, move your hand to move the tool, roll the hand to turn A6, and pinch to record.</p>
-                <h4>Shortcuts</h4><p>R record · Space run or stop · 1 to 6 select axis, then ← → to jog · I T F S fit views.</p>
+                <h4>Station sequences</h4><p><b>Sequential</b>: one robot at a time, safest when work areas overlap. <b>Parallel</b>: tick several robots in one step so they work together, for example two guns welding opposite sides. <b>Positioner</b>: turn E1 between robot steps so every robot reaches its spots. Check cycle time by watching the longest robot in each step.</p><h4>Shortcuts</h4><p>R record · Space run or stop · 1 to 6 select axis, then ← → to jog · I T F S fit views.</p>
             </div>
         </div>
     </div>
@@ -505,12 +541,12 @@ def build_embedded_viewport(payload):
 
     <script>
         const data = JSON.parse(JSON.stringify(__PAYLOAD_STREAM__));
-        const dh = data.dhConfig;
-        const limitsConfig = data.jointLimits;
-
-        let localJointAngles = [...data.initialAngles];
+        /* Multi-robot station: every robot has its own state; the globals below always point at the ACTIVE robot,
+           so the original kinematics / IK / gesture code works unchanged for whichever robot is selected. */
+        let dh = null, limitsConfig = null;
+        let localJointAngles = new Array(8).fill(0);
         let lastComputedTransforms = [];
-        let embeddedTrajectory = [...data.trajectory];
+        let embeddedTrajectory = [];
         let activeJogMode = "joint";
         
         const J_STEP = 5 * (Math.PI / 180);
@@ -539,23 +575,16 @@ def build_embedded_viewport(payload):
         scene.add(grid);
 
         const loader = new THREE.STLLoader();
-        const links = [];
-        
-        let gunMesh = new THREE.Group();
+        let links = [];
+        let gunMesh = null, toolAdjustmentGroup = null, tcpAnchorPivot = null;
         let jigMesh = new THREE.Group();
         let internalJigContent = new THREE.Group();
-        
-        scene.add(gunMesh);
         jigMesh.add(internalJigContent);
         scene.add(jigMesh);
-
-        const tcpAnchorPivot = new THREE.Object3D();
-        scene.add(tcpAnchorPivot);
 
         const transformGizmo = new THREE.TransformControls(camera, renderer.domElement);
         transformGizmo.size = 0.65;
         transformGizmo.setMode("translate");
-        transformGizmo.attach(tcpAnchorPivot);
         transformGizmo.visible = false;
         transformGizmo.enabled = false;
         scene.add(transformGizmo.isObject3D ? transformGizmo : transformGizmo.getHelper());
@@ -577,39 +606,76 @@ def build_embedded_viewport(payload):
             return bytes.buffer;
         }
 
-        let targetColor = 0xcccccc; 
-        if (data.profileName === "Yaskawa_3500") { targetColor = 0x0055ff; } 
-        else if (data.profileName === "KUKA_KR150") { targetColor = 0xff6600; }
+        /* ---------- one robot = one root group at its base pose; links, tool and TCP pivot are children ---------- */
+        const stationRobots = [];
+        let activeR = null;
+        function labelSprite(text, color) {
+            const c = document.createElement('canvas'); c.width = 256; c.height = 64; const x = c.getContext('2d');
+            x.fillStyle = 'rgba(10,12,16,.8)'; x.fillRect(0, 0, 256, 64); x.strokeStyle = color; x.lineWidth = 3; x.strokeRect(2, 2, 252, 60);
+            x.font = 'bold 30px Segoe UI, Arial'; x.fillStyle = color; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 128, 34);
+            const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+            s.scale.set(0.9, 0.225, 1); s.renderOrder = 997; return s;
+        }
+        function createRobot(idx, rc) {
+            const prof = data.profiles[rc.profile];
+            const root = new THREE.Group();
+            root.position.set(rc.base.x, rc.base.y, rc.base.z || 0); root.rotation.z = rc.base.yaw || 0;
+            scene.add(root);
 
-        for(let i=0; i<7; i++) {
-            let mesh;
-            let currentLinkColor = (i === 0) ? 0x222222 : targetColor;
+            let targetColor = 0xcccccc;
+            if (rc.profile === "Yaskawa_3500") { targetColor = 0x0055ff; }
+            else if (rc.profile === "KUKA_KR150") { targetColor = 0xff6600; }
 
-            if(data.linkGeometries && data.linkGeometries[i] && data.linkGeometries[i].length > 0) {
-                const geometry = loader.parse(base64ToArrayBuffer(data.linkGeometries[i]));
-                const material = new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 });
-                mesh = new THREE.Mesh(geometry, material);
-            } else {
-                const h = data.fallbackHeights[i];
-                const geometry = new THREE.CylinderGeometry(0.18, 0.22, h, 24);
-                geometry.rotateX(Math.PI / 2); 
-                if(i === 1 || i === 2 || i === 3) { geometry.translate(0, 0, h / 2); }
-                mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 }));
+            const rlinks = [];
+            for (let i = 0; i < 7; i++) {
+                let mesh;
+                let currentLinkColor = (i === 0) ? 0x222222 : targetColor;
+                if (prof.linkGeometries && prof.linkGeometries[i] && prof.linkGeometries[i].length > 0) {
+                    const geometry = loader.parse(base64ToArrayBuffer(prof.linkGeometries[i]));
+                    mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 }));
+                } else {
+                    const h = prof.fallbackHeights[i];
+                    const geometry = new THREE.CylinderGeometry(0.18, 0.22, h, 24);
+                    geometry.rotateX(Math.PI / 2);
+                    if (i === 1 || i === 2 || i === 3) { geometry.translate(0, 0, h / 2); }
+                    mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: currentLinkColor, roughness: 0.4 }));
+                }
+                root.add(mesh); rlinks.push(mesh);
             }
-            scene.add(mesh);
-            links.push(mesh);
+            const gm = new THREE.Group(); root.add(gm);
+            const tg = new THREE.Group(); gm.add(tg);
+            let hasTool = false;
+            const tb = rc.toolKey ? data.tools[rc.toolKey] : "";
+            if (tb && tb.length > 0) {
+                const geometry = loader.parse(base64ToArrayBuffer(tb));
+                geometry.center();
+                const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
+                m.scale.set(0.001, 0.001, 0.001);
+                tg.add(m); hasTool = true;
+            }
+            const pivot = new THREE.Object3D(); root.add(pivot);
+            const sprite = labelSprite('R' + (idx + 1) + '  ' + rc.profile.replace('_', ' '), '#ffb74d'); sprite.position.set(0, 0, 2.9); root.add(sprite);
+            return { idx: idx, label: 'R' + (idx + 1), profile: rc.profile, root: root, links: rlinks, gunMesh: gm, tg: tg, pivot: pivot, dh: prof.dhConfig, limits: prof.jointLimits,
+                     angles: new Array(8).fill(0), traj: [], tool: { ox: 0, oy: 0, oz: 0, rx: 0, ry: 0, rz: 0 }, hasTool: hasTool, toolName: rc.toolName || '', sprite: sprite };
         }
-
-        let toolAdjustmentGroup = new THREE.Group();
-        gunMesh.add(toolAdjustmentGroup);
-
-        if(data.gunData && data.gunData.length > 0) {
-            const geometry = loader.parse(base64ToArrayBuffer(data.gunData));
-            geometry.center(); 
-            const gunInternalMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
-            gunInternalMesh.scale.set(0.001, 0.001, 0.001); 
-            toolAdjustmentGroup.add(gunInternalMesh);
+        function bindRobot(R) {
+            activeR = R; dh = R.dh; limitsConfig = R.limits; localJointAngles = R.angles; embeddedTrajectory = R.traj;
+            links = R.links; gunMesh = R.gunMesh; toolAdjustmentGroup = R.tg; tcpAnchorPivot = R.pivot; data.profileName = R.profile;
+            data.toolOffsetX = R.tool.ox; data.toolOffsetY = R.tool.oy; data.toolOffsetZ = R.tool.oz; data.toolRotX = R.tool.rx; data.toolRotY = R.tool.ry; data.toolRotZ = R.tool.rz;
         }
+        function commitRobot(R) {
+            if (!R) return;
+            R.angles = localJointAngles; R.traj = embeddedTrajectory;
+            R.tool = { ox: data.toolOffsetX, oy: data.toolOffsetY, oz: data.toolOffsetZ, rx: data.toolRotX, ry: data.toolRotY, rz: data.toolRotZ };
+        }
+        function withRobot(R, fn) {
+            if (R === activeR) return fn();
+            const prev = activeR; commitRobot(prev); bindRobot(R);
+            try { return fn(); } finally { commitRobot(R); bindRobot(prev); }
+        }
+        data.robots.forEach((rc, i) => stationRobots.push(createRobot(i, rc)));
+        bindRobot(stationRobots[0]);
+        transformGizmo.attach(tcpAnchorPivot);
 
         if(data.jigData && data.jigData.length > 0) {
             const geometry = loader.parse(base64ToArrayBuffer(data.jigData));
@@ -671,7 +737,7 @@ def build_embedded_viewport(payload):
 
         function executeCyclicInverseKinematics(targetGlobalPos) {
             if (links[6]) {
-                let physicalWristPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                let physicalWristPos = links[6].position.clone();
                 let deviationDistance = targetGlobalPos.distanceTo(physicalWristPos);
                 
                 if (deviationDistance > 0.10) {
@@ -969,7 +1035,7 @@ def build_embedded_viewport(payload):
                             
                             handCalibrationBaseline = rawHandVec.clone();
                             if (links[6]) {
-                                robotCalibrationBaseline = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                                robotCalibrationBaseline = links[6].position.clone();
                                 tcpAnchorPivot.position.copy(robotCalibrationBaseline);
                             }
                         } else {
@@ -977,7 +1043,7 @@ def build_embedded_viewport(payload):
                             document.getElementById("ar-hud-text").style.color = "#ffeb3b";
                             
                             if (links[6]) {
-                                let currentRobotPos = new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld);
+                                let currentRobotPos = links[6].position.clone();
                                 tcpAnchorPivot.position.copy(currentRobotPos);
                             }
                         }
@@ -989,7 +1055,7 @@ def build_embedded_viewport(payload):
                         document.getElementById("ar-hud-text").style.color = "#ff9800";
                         
                         if (links[6]) {
-                            tcpAnchorPivot.position.copy(new THREE.Vector3().setFromMatrixPosition(links[6].matrixWorld));
+                            tcpAnchorPivot.position.copy(links[6].position.clone());
                         }
                     }
                 } else {
@@ -1112,44 +1178,48 @@ def build_embedded_viewport(payload):
             if (mpCamera) { mpCamera.stop(); mpCamera = null; } 
         }
 
-        /* ======================= UI LAYER (added; kinematics above is unchanged) ======================= */
+        /* ======================= UI LAYER (added; the kinematics above is the original) ======================= */
         const $ = (id) => document.getElementById(id);
         const D2R = Math.PI / 180, R2D = 180 / Math.PI;
         const REACH = { ABB_6700: 2.65, ABB_4400: 1.95, ABB_6600: 2.55, KUKA_KR150: 3.1, Yaskawa_3500: 2.45 };
-        $('chip-robot').innerText = data.profileName.replace('_', ' ');
-        $('inf-model').innerText = data.profileName.replace('_', ' ');
-        $('inf-reach').innerText = (REACH[data.profileName] || 2.5).toFixed(2);
+        let e1Global = 0;                    // the positioner (E1) is shared by the whole station
+        let dirty = false;
+        function markDirty() { dirty = true; }
+        function syncProgramToParent() { markDirty(); }     // programs are now kept in the browser (no page reload, no URL hack)
+        const busy = () => runSimulation || SR.on;
+        const rName = (R) => R.label + ' ' + R.profile.replace('_', ' ');
 
         function toast(msg) { const t = $('toast'); t.innerText = msg; t.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = 'none', 3500); }
 
-        // tabs
+        // ---------- tabs ----------
         document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
             document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
             document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + t.dataset.tab));
             if (t.dataset.tab === 'prog') renderProgram();
+            if (t.dataset.tab === 'station') { renderStationRobots(); renderSeq(); }
         }));
 
-        // visibility toggles
-        const visTargets = { robot: () => links, tool: () => [gunMesh], jig: () => [jigMesh], grid: () => [grid] };
-        document.querySelectorAll('.eye').forEach(e => e.addEventListener('click', () => {
-            const on = e.classList.toggle('off') === false;
-            visTargets[e.dataset.vis]().forEach(o => o.visible = on);
-        }));
-
-        // camera views
+        // ---------- camera views (centred on the whole station) ----------
+        function stationCentre() {
+            let x = 0, y = 0; stationRobots.forEach(R => { x += R.root.position.x; y += R.root.position.y; }); x /= stationRobots.length; y /= stationRobots.length;
+            x = (x * stationRobots.length + data.jigX) / (stationRobots.length + 1); y = (y * stationRobots.length + data.jigY) / (stationRobots.length + 1);
+            let r = 1.5; stationRobots.forEach(R => { r = Math.max(r, Math.hypot(R.root.position.x - x, R.root.position.y - y)); });
+            return { x: x, y: y, r: r };
+        }
         function setView(name) {
-            const t = controls.target;
-            if (name === 'iso' || name === 'fit') { t.set(0.8, 0, 0.8); camera.position.set(4.0, -4.0, 3.0); }
-            if (name === 'front') { t.set(0.8, 0, 0.8); camera.position.set(0.8, -6, 1.0); }
-            if (name === 'side') { t.set(0.8, 0, 0.8); camera.position.set(6.5, 0, 1.0); }
-            if (name === 'top') { t.set(0.8, 0, 0); camera.position.set(0.8, 0.001, 7); }
+            const c = stationCentre(), t = controls.target, d = 4.2 + c.r * 1.6;
+            t.set(c.x, c.y, 0.8);
+            if (name === 'iso' || name === 'fit') camera.position.set(c.x + d * 0.75, c.y - d * 0.75, 0.8 + d * 0.55);
+            if (name === 'front') camera.position.set(c.x, c.y - d * 1.2, 1.0);
+            if (name === 'side') camera.position.set(c.x + d * 1.2, c.y, 1.0);
+            if (name === 'top') { t.set(c.x, c.y, 0); camera.position.set(c.x, c.y + 0.001, d * 1.4); }
             camera.up.set(0, 0, 1); controls.update();
         }
         document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
 
-        // joint rows: slider + minus/plus + value (ids val-i, btn-m-i, btn-p-i are the originals)
+        // ---------- joint rows ----------
         function setJointAbs(i, ang) {
-            if (runSimulation) return;
+            if (busy()) return;
             ang = Math.max(limitsConfig[i - 1][0], Math.min(limitsConfig[i - 1][1], ang));
             localJointAngles[i] = ang;
             refreshSceneDisplay(true);
@@ -1174,10 +1244,52 @@ def build_embedded_viewport(payload):
         }
         buildJogRows();
 
-        // live read-outs (called every frame; cheap)
+        // ---------- robots: tree, selector, activation ----------
+        function updateChips() {
+            $('chip-robot').innerText = rName(activeR); $('inf-model').innerText = rName(activeR);
+            $('inf-reach').innerText = (REACH[activeR.profile] || 2.5).toFixed(2);
+        }
+        function updateTreeClasses() {
+            document.querySelectorAll('#robot-nodes .node').forEach(n => { const on = +n.dataset.robot === activeR.idx; n.classList.toggle('act', on); n.classList.toggle('sel', on && selPart === 'robot'); });
+            document.querySelectorAll('.node.pick[data-part]').forEach(n => n.classList.toggle('sel', n.dataset.part === selPart));
+            stationRobots.forEach(R => R.sprite.material.opacity = (R === activeR) ? 1 : 0.55);
+        }
+        function buildTree() {
+            const box = $('robot-nodes'); box.innerHTML = '';
+            const sel = $('sel-robot'); sel.innerHTML = '';
+            stationRobots.forEach(R => {
+                const d = document.createElement('div'); d.className = 'node pick'; d.dataset.robot = R.idx;
+                d.innerHTML = '<span>🦾</span><span class="nm">' + rName(R) + '</span><span class="eye">👁</span>';
+                box.appendChild(d);
+                d.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('eye')) { R.root.visible = !R.root.visible; e.target.classList.toggle('off', !R.root.visible); return; }
+                    activate(R); selectPart('robot');
+                });
+                const o = document.createElement('option'); o.value = R.idx; o.textContent = rName(R); sel.appendChild(o);
+            });
+            $('robot-sel-row').style.display = stationRobots.length > 1 ? 'flex' : 'none';
+            sel.addEventListener('change', () => activate(stationRobots[+sel.value]));
+        }
+        function activate(R) {
+            if (R === activeR) return;
+            if (busy()) { toast('Stop the simulation first'); $('sel-robot').value = activeR.idx; return; }
+            commitRobot(activeR); R.angles[7] = e1Global; bindRobot(R);
+            transformGizmo.attach(R.pivot);
+            buildJogRows(); refreshSceneDisplay(true); updateUIElements(); updateChips();
+            $('sel-robot').value = R.idx;
+            if (selPart === 'tool' && !R.hasTool) selectPart(null);
+            syncProxy(); updateTreeClasses(); applyGizmoVisibility(); markDirty();
+        }
+        document.querySelectorAll('.eye[data-vis]').forEach(e => e.addEventListener('click', () => {
+            const on = e.classList.toggle('off') === false, k = e.dataset.vis;
+            if (k === 'tool') stationRobots.forEach(R => R.gunMesh.visible = on); else if (k === 'jig') jigMesh.visible = on; else if (k === 'grid') grid.visible = on;
+        }));
+
+        // ---------- live read-outs ----------
         let lastSig = '';
         function updateReadouts() {
             const a = localJointAngles;
+            if (!SR.on && !runSimulation) e1Global = a[7];
             let near = false;
             for (let i = 1; i <= 7; i++) {
                 const s = $('sld-j-' + i); if (s && document.activeElement !== s) s.value = (a[i] * R2D).toFixed(1);
@@ -1189,12 +1301,12 @@ def build_embedded_viewport(payload):
             const pl = $('pill-lim'); pl.className = 'pill' + (near ? ' bad' : ''); pl.innerText = near ? 'Joint near limit' : 'Joint limits OK';
             if (links[6]) {
                 const p = links[6].position; const sh = links[2] ? links[2].position : new THREE.Vector3(); const r = Math.hypot(p.x - sh.x, p.y - sh.y, p.z - sh.z);   // reach is measured from the shoulder (A2)
-                const out = r > (REACH[data.profileName] || 2.5);
+                const out = r > (REACH[activeR.profile] || 2.5);
                 const pr = $('pill-reach'); pr.className = 'pill' + (out ? ' bad' : ''); pr.innerText = out ? 'Beyond reach' : 'Within reach';
                 const sig = [p.x, p.y, p.z, a.join()].join('|');
                 if (sig !== lastSig) {
-                    lastSig = sig;
-                    $('sb-tcp').innerHTML = 'TCP <b>X ' + (p.x * 1000).toFixed(0) + ' Y ' + (p.y * 1000).toFixed(0) + ' Z ' + (p.z * 1000).toFixed(0) + '</b> mm';
+                    lastSig = sig; if (!busy()) markDirty();
+                    $('sb-tcp').innerHTML = activeR.label + ' TCP <b>X ' + (p.x * 1000).toFixed(0) + ' Y ' + (p.y * 1000).toFixed(0) + ' Z ' + (p.z * 1000).toFixed(0) + '</b> mm';
                     $('sb-joints').innerHTML = 'Joints <b>' + a.slice(1, 7).map(v => (v * R2D).toFixed(0)).join(' ') + '</b> · E1 <b>' + (a[7] * R2D).toFixed(0) + '</b>';
                 }
             }
@@ -1203,16 +1315,7 @@ def build_embedded_viewport(payload):
             $('chip-mode').innerText = activeJogMode === 'joint' ? 'Joint' : activeJogMode === 'tcp' ? 'TCP' : 'Gesture';
         }
 
-        // program table
-        function syncProgramToParent(evt) {
-            try {
-                const u = new URL(window.parent.location.href);
-                u.searchParams.set('event', evt);
-                if (evt === 'sync_sequence') u.searchParams.set('program_data', JSON.stringify(embeddedTrajectory));
-                else u.searchParams.delete('program_data');
-                window.parent.history.replaceState({}, '', u.toString());   // no page reload: Streamlit reads it on its next rerun
-            } catch (e) { /* parent not reachable: the program still works locally */ }
-        }
+        // ---------- program table (active robot) ----------
         function renderProgram() {
             const tb = $('prog-body'); tb.innerHTML = '';
             embeddedTrajectory.forEach((st, i) => {
@@ -1223,66 +1326,48 @@ def build_embedded_viewport(payload):
             });
             $('prog-empty').style.display = embeddedTrajectory.length ? 'none' : 'block';
             $('inf-steps').innerText = embeddedTrajectory.length;
+            if ($('pane-station').classList.contains('active')) renderStationRobots();
         }
         $('prog-body').addEventListener('click', (e) => {
             const g = e.target.getAttribute('data-go'), d = e.target.getAttribute('data-del');
-            if (g !== null && !runSimulation) { localJointAngles = [...embeddedTrajectory[+g].angles]; refreshSceneDisplay(true); toast('Moved to step ' + (+g + 1)); }
-            if (d !== null && !runSimulation) { embeddedTrajectory.splice(+d, 1); updateUIElements(); syncProgramToParent(embeddedTrajectory.length ? 'sync_sequence' : 'clear_sequence'); }
+            if (g !== null && !busy()) { localJointAngles = [...embeddedTrajectory[+g].angles]; activeR.angles = localJointAngles; refreshSceneDisplay(true); toast('Moved to step ' + (+g + 1)); }
+            if (d !== null && !busy()) { embeddedTrajectory.splice(+d, 1); updateUIElements(); markDirty(); }
         });
         const _origUpdateUI = updateUIElements;
         updateUIElements = function () { _origUpdateUI(); renderProgram(); };
 
-        // export
         $('btn-export').addEventListener('click', () => {
-            if (!embeddedTrajectory.length) { toast('Nothing to export yet. Record some steps first.'); return; }
-            let t = '! Robot program exported from Industrial Robot Cloud Simulator\n! Robot: ' + data.profileName + '\n! Joint targets in degrees (A1..A6), E1 positioner\n\n';
-            embeddedTrajectory.forEach((s, i) => {
-                const q = s.angles.slice(1, 7).map(v => (v * R2D).toFixed(2)).join(', ');
-                t += 'MoveAbsJ  [' + q + '], E1=' + (s.angles[7] * R2D).toFixed(2) + ', speed=' + $('sld-speed').value + '%;   ! step ' + (i + 1) + '\n';
+            let t = '! Robot programs exported from Industrial Robot Cloud Simulator\n! Joint targets in degrees (A1..A6), E1 positioner\n';
+            let any = false;
+            commitRobot(activeR);
+            stationRobots.forEach(R => {
+                if (!R.traj.length) return; any = true;
+                t += '\n! ===== ' + rName(R) + ' =====\n';
+                R.traj.forEach((s, i) => { t += 'MoveAbsJ  [' + s.angles.slice(1, 7).map(v => (v * R2D).toFixed(2)).join(', ') + '], E1=' + (s.angles[7] * R2D).toFixed(2) + ', speed=' + $('sld-speed').value + '%;   ! ' + R.label + ' step ' + (i + 1) + '\n'; });
             });
+            if (!any) { toast('Nothing to export yet. Record some steps first.'); return; }
             const url = URL.createObjectURL(new Blob([t], { type: 'text/plain' }));
-            const a = document.createElement('a'); a.href = url; a.download = data.profileName + '_program.txt'; a.click(); URL.revokeObjectURL(url);
+            const a = document.createElement('a'); a.href = url; a.download = 'station_program.txt'; a.click(); URL.revokeObjectURL(url);
         });
         $('btn-help').addEventListener('click', () => { document.querySelector('.tab[data-tab="learn"]').click(); });
 
-        // run / stop button
+        // ---------- run / stop (active robot) ----------
         function toggleRun() {
+            if (SR.on) return;
             if (runSimulation) { runSimulation = false; simStepIndex = 0; interpolationFraction = 0; return; }
-            if (embeddedTrajectory.length < 2) { toast('Record at least 2 steps first.'); return; }
+            if (embeddedTrajectory.length < 2) { toast('Record at least 2 steps for this robot first.'); return; }
             simStepIndex = 0; interpolationFraction = 0; runSimulation = true;
         }
         $('btn-run-sim').addEventListener('click', toggleRun);
         function updateRunUI() {
-            document.body.classList.toggle('running', runSimulation);
+            document.body.classList.toggle('running', busy());
             const b = $('btn-run-sim'); b.classList.toggle('stop', runSimulation);
             b.innerText = runSimulation ? '⏹ STOP SIMULATION' : '▶️ RUN SIMULATION';
+            const s = $('btn-seq-run'); s.classList.toggle('stop', SR.on); s.innerText = SR.on ? '⏹ STOP STATION' : '▶️ RUN STATION SEQUENCE';
+            s.style.pointerEvents = 'auto'; s.style.opacity = 1;
         }
 
-        // keyboard
-        let selAxis = 1;
-        window.addEventListener('keydown', (e) => {
-            if (e.target && (e.target.tagName === 'INPUT' && e.target.type !== 'range' || e.target.tagName === 'SELECT')) return;
-            const k = e.key.toLowerCase();
-            if (k === 'r') { triggerManualStepRecord(); toast('Step recorded'); }
-            else if (k === ' ') { e.preventDefault(); toggleRun(); }
-            else if (k >= '1' && k <= '6') { selAxis = +k; toast('Axis A' + k + ' selected: use ← → to jog'); }
-            else if (k === 'arrowleft' && activeJogMode === 'joint') { jogJointUI(selAxis, -1); e.preventDefault(); }
-            else if (k === 'arrowright' && activeJogMode === 'joint') { jogJointUI(selAxis, 1); e.preventDefault(); }
-            else if (k === 'i') setView('iso'); else if (k === 'f') setView('front'); else if (k === 's') setView('side'); else if (k === 't') setView('top');
-        });
-
-        // keep the 3D canvas sized to its panel
-        if (window.ResizeObserver) new ResizeObserver(() => {
-            if (!container.clientWidth || !container.clientHeight) return;
-            camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix();
-            renderer.setSize(container.clientWidth, container.clientHeight);
-        }).observe(container);
-
-        setInterval(updateReadouts, 120);
-        setInterval(updateRunUI, 150);
-        updateReadouts();
-
-        /* ======================= PART EDITING (tool / jig gizmo) ======================= */
+        /* ======================= PART EDITING: robot base, tool, jig ======================= */
         const partProxy = new THREE.Object3D(); scene.add(partProxy);
         const partAxes = new THREE.AxesHelper(0.45); partAxes.material.depthTest = false; partAxes.renderOrder = 998; partProxy.add(partAxes); partAxes.visible = false;
         const partGizmo = new THREE.TransformControls(camera, renderer.domElement);
@@ -1290,24 +1375,22 @@ def build_embedded_viewport(payload):
         partGizmo.attach(partProxy);
         scene.add(partGizmo.isObject3D ? partGizmo : partGizmo.getHelper());
         partGizmo.visible = false; partGizmo.enabled = false;
-        let selPart = null, partDragging = false;
+        let selPart = null, partDragging = false, gMode = 'translate';
 
         function tintPart(obj, on) { obj.traverse(o => { if (o.isMesh && o.material && o.material.emissive) o.material.emissive.setHex(on ? 0x6a3a00 : 0x000000); }); }
-        function hasTool() { return !!(data.gunData && data.gunData.length); }
-        function hasJig() { return !!(data.jigData && data.jigData.length); }
         function selectPart(name) {
-            if (runSimulation) return;
-            if (name === 'robot' || name === '') name = null;
-            if (name === 'tool' && !hasTool()) { toast('No tool loaded. Choose a tool in Simulation Setup above.'); name = null; }
-            if (name === 'jig' && !hasJig()) { toast('No jig loaded. Upload a jig STL in Simulation Setup above.'); name = null; }
-            tintPart(gunMesh, false); tintPart(jigMesh, false);
+            if (busy()) return;
+            if (name === '') name = null;
+            if (name === 'tool' && !activeR.hasTool) { toast('This robot has no tool. Choose one in Simulation Setup above.'); name = null; }
+            if (name === 'jig' && !(data.jigData && data.jigData.length)) { toast('No jig loaded. Upload a jig STL in Simulation Setup above.'); name = null; }
+            stationRobots.forEach(R => tintPart(R.root, false)); tintPart(jigMesh, false);
             selPart = name;
-            if (name) { tintPart(name === 'tool' ? gunMesh : jigMesh, true); syncProxy(); }
+            if (name === 'tool') tintPart(activeR.gunMesh, true); else if (name === 'robot') tintPart(activeR.root, true); else if (name === 'jig') tintPart(jigMesh, true);
+            syncProxy();
             partGizmo.visible = !!name; partGizmo.enabled = !!name; partAxes.visible = !!name;
-            document.querySelectorAll('.node.pick').forEach(n => n.classList.toggle('sel', n.dataset.part === name));
             $('parttools').style.display = name ? 'block' : 'none';
-            $('pt-name').innerText = name === 'tool' ? '🔧 Tool selected (moves with the flange)' : name === 'jig' ? '⚙ Jig selected' : '';
-            applyGizmoVisibility();
+            $('pt-name').innerText = name === 'tool' ? '🔧 ' + activeR.label + ' tool (moves with the flange)' : name === 'robot' ? '🦾 ' + rName(activeR) + ' base: move it anywhere, the tool follows' : name === 'jig' ? '⚙ Jig selected' : '';
+            applySnap(); updateTreeClasses(); applyGizmoVisibility();
         }
         function applyGizmoVisibility() {
             const wantTcp = (activeJogMode !== 'joint') && !selPart;
@@ -1318,73 +1401,124 @@ def build_embedded_viewport(payload):
         function syncProxy() {
             if (!selPart || partDragging) return;
             if (selPart === 'tool') { toolAdjustmentGroup.updateWorldMatrix(true, false); toolAdjustmentGroup.getWorldPosition(partProxy.position); toolAdjustmentGroup.getWorldQuaternion(partProxy.quaternion); }
+            else if (selPart === 'robot') { partProxy.position.copy(activeR.root.position); partProxy.quaternion.copy(activeR.root.quaternion); }
             else { partProxy.position.copy(jigMesh.position); partProxy.quaternion.copy(jigMesh.quaternion); }
         }
         (function loop() { requestAnimationFrame(loop); syncProxy(); })();
 
         function applyProxyToPart() {
             if (selPart === 'tool' && links[6]) {
-                const q6 = links[6].quaternion, inv = q6.clone().invert();
-                const off = partProxy.position.clone().sub(links[6].position).applyQuaternion(inv);
+                links[6].updateWorldMatrix(true, false);
+                const p6 = new THREE.Vector3(), q6 = new THREE.Quaternion(); links[6].getWorldPosition(p6); links[6].getWorldQuaternion(q6);
+                const inv = q6.clone().invert();
+                const off = partProxy.position.clone().sub(p6).applyQuaternion(inv);
                 data.toolOffsetX = off.x; data.toolOffsetY = off.y; data.toolOffsetZ = off.z;
                 const e = new THREE.Euler().setFromQuaternion(inv.multiply(partProxy.quaternion.clone()), 'XYZ');
                 data.toolRotX = e.x; data.toolRotY = e.y; data.toolRotZ = e.z;
+            } else if (selPart === 'robot') {
+                activeR.root.position.copy(partProxy.position);
+                activeR.root.rotation.set(0, 0, new THREE.Euler().setFromQuaternion(partProxy.quaternion, 'ZYX').z);   // robots only turn about the vertical axis
             } else if (selPart === 'jig') {
                 data.jigX = partProxy.position.x; data.jigY = partProxy.position.y; data.jigZ = partProxy.position.z;
                 jigMesh.quaternion.copy(partProxy.quaternion);
             }
             refreshSceneDisplay(false);
         }
-        partGizmo.addEventListener('dragging-changed', (e) => { partDragging = e.value; controls.enabled = !e.value; if (!e.value) saveLayout(); });
+        partGizmo.addEventListener('dragging-changed', (e) => { partDragging = e.value; controls.enabled = !e.value; if (!e.value) markDirty(); });
         partGizmo.addEventListener('objectChange', applyProxyToPart);
 
-        // move / rotate / space
+        function setGizmoMode(m) {
+            gMode = m; partGizmo.setMode(m);
+            document.querySelectorAll('.pt-move').forEach(b => b.classList.toggle('active', m === 'translate'));
+            document.querySelectorAll('.pt-rot').forEach(b => b.classList.toggle('active', m === 'rotate'));
+            applySnap();
+        }
         let gSpace = 'world';
-        function setGizmoMode(m) { partGizmo.setMode(m); document.querySelectorAll('.pt-move').forEach(b => b.classList.toggle('active', m === 'translate')); document.querySelectorAll('.pt-rot').forEach(b => b.classList.toggle('active', m === 'rotate')); }
         function toggleSpace() { gSpace = gSpace === 'world' ? 'local' : 'world'; partGizmo.setSpace(gSpace); document.querySelectorAll('.pt-space').forEach(b => b.innerText = 'Space: ' + (gSpace === 'world' ? 'World' : 'Local') + ' (Q)'); }
         document.querySelectorAll('.pt-move').forEach(b => b.addEventListener('click', () => setGizmoMode('translate')));
         document.querySelectorAll('.pt-rot').forEach(b => b.addEventListener('click', () => setGizmoMode('rotate')));
         document.querySelectorAll('.pt-space').forEach(b => b.addEventListener('click', toggleSpace));
-        setGizmoMode('translate');
         document.querySelectorAll('[data-sel]').forEach(b => b.addEventListener('click', () => selectPart(b.dataset.sel)));
-        document.querySelectorAll('.node.pick').forEach(n => n.addEventListener('click', () => selectPart(n.dataset.part)));
+        document.querySelectorAll('.node.pick[data-part]').forEach(n => n.addEventListener('click', () => selectPart(n.dataset.part)));
+
+        // ---------- snapping: tool = 90 degrees (match with flange A6), robot = 15 degrees ----------
+        let snapOn = true;
+        function applySnap() {
+            const tool = selPart === 'tool' && snapOn, robot = selPart === 'robot';
+            partGizmo.setRotationSnap(tool ? Math.PI / 2 : robot ? 15 * D2R : null);
+            partGizmo.setTranslationSnap(tool ? 0.01 : robot ? 0.05 : null);
+            const rotOnlyZ = selPart === 'robot' && gMode === 'rotate';
+            partGizmo.showX = !rotOnlyZ; partGizmo.showY = !rotOnlyZ; partGizmo.showZ = true;
+            $('pt-snap').innerText = 'Snap 90°: ' + (snapOn ? 'ON' : 'OFF'); $('pt-snap').classList.toggle('active', snapOn);
+            $('tool-only').style.display = selPart === 'tool' ? 'flex' : 'none';
+        }
+        $('pt-snap').addEventListener('click', () => { snapOn = !snapOn; applySnap(); });
+        function toolLocalQuat() { return new THREE.Quaternion().setFromEuler(new THREE.Euler(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ')); }
+        function setToolLocalQuat(q) { const e = new THREE.Euler().setFromQuaternion(q, 'XYZ'); data.toolRotX = e.x; data.toolRotY = e.y; data.toolRotZ = e.z; refreshSceneDisplay(false); markDirty(); }
+        document.querySelectorAll('.rot90').forEach(b => b.addEventListener('click', () => {
+            const ax = b.dataset.ax === 'x' ? new THREE.Vector3(1, 0, 0) : b.dataset.ax === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
+            setToolLocalQuat(new THREE.Quaternion().setFromAxisAngle(ax, Math.PI / 2).multiply(toolLocalQuat()));   // turned about the flange (A6) axes
+        }));
+        function snapQuat90(q) {   // nearest of the 24 axis-aligned orientations
+            const e = new THREE.Matrix4().makeRotationFromQuaternion(q).elements;
+            const col = (i) => new THREE.Vector3(e[i * 4], e[i * 4 + 1], e[i * 4 + 2]);
+            const dom = (v, skip) => { let best = -1, bi = 0; ['x', 'y', 'z'].forEach((k, i) => { if (skip.includes(i)) return; if (Math.abs(v[k]) > best) { best = Math.abs(v[k]); bi = i; } }); const o = new THREE.Vector3(); o.setComponent(bi, Math.sign(v.getComponent(bi)) || 1); return [o, bi]; };
+            const [a0, i0] = dom(col(0), []); const [a1] = dom(col(1), [i0]); const a2 = new THREE.Vector3().crossVectors(a0, a1);
+            return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(a0, a1, a2));
+        }
+        function roundTool(msg) { setToolLocalQuat(snapQuat90(toolLocalQuat())); if (msg) toast('Tool rotation rounded to the nearest 90°'); }
+        $('pt-round').addEventListener('click', () => roundTool(true));
+        partGizmo.addEventListener('dragging-changed', (e) => { if (!e.value && selPart === 'tool' && snapOn) roundTool(false); });
+
         window.addEventListener('keydown', (e) => {
             if (e.target && (e.target.tagName === 'INPUT' && e.target.type !== 'range' || e.target.tagName === 'SELECT')) return;
             const k = e.key.toLowerCase();
             if (k === 'w') setGizmoMode('translate'); else if (k === 'e') setGizmoMode('rotate'); else if (k === 'q') toggleSpace(); else if (k === 'escape') selectPart(null);
+            else if (k === 'r') { if (!busy()) { triggerManualStepRecord(); toast('Step recorded'); } }
+            else if (k === ' ') { e.preventDefault(); if (SR.on) seqStop(); else toggleRun(); }
+            else if (k >= '1' && k <= '6') { selAxis = +k; toast('Axis A' + k + ' selected: use ← → to jog'); }
+            else if (k === 'arrowleft' && activeJogMode === 'joint') { jogJointUI(selAxis, -1); e.preventDefault(); }
+            else if (k === 'arrowright' && activeJogMode === 'joint') { jogJointUI(selAxis, 1); e.preventDefault(); }
+            else if (k === 'i') setView('iso'); else if (k === 'f') setView('front'); else if (k === 's') setView('side'); else if (k === 't') setView('top');
         });
+        let selAxis = 1;
 
-        // click in 3D to select (cheap: ray against bounding boxes, tool first)
+        // ---------- click in 3D to select (ray against bounding boxes: tool, then robots, then jig) ----------
         let downPt = null;
         renderer.domElement.addEventListener('pointerdown', (e) => { downPt = { x: e.clientX, y: e.clientY }; });
         renderer.domElement.addEventListener('pointerup', (e) => {
-            if (!downPt || runSimulation) return;
+            if (!downPt || busy()) return;
             const moved = Math.hypot(e.clientX - downPt.x, e.clientY - downPt.y); downPt = null;
             if (moved > 4 || partGizmo.axis || transformGizmo.axis) return;
             const r = renderer.domElement.getBoundingClientRect();
             const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
             const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
             const hit = (obj) => { if (!obj.visible) return false; const b = new THREE.Box3().setFromObject(obj); return !b.isEmpty() && ray.ray.intersectBox(b, new THREE.Vector3()) !== null; };
-            if (hasTool() && hit(gunMesh)) selectPart('tool'); else if (hasJig() && hit(jigMesh)) selectPart('jig'); else selectPart(null);
+            if (activeR.hasTool && hit(activeR.gunMesh)) { selectPart('tool'); return; }
+            for (const R of stationRobots) { if (hit(R.links[0]) || hit(R.links[1]) || hit(R.links[2]) || hit(R.links[3])) { activate(R); selectPart('robot'); return; } }
+            if (data.jigData && data.jigData.length && hit(jigMesh)) selectPart('jig'); else selectPart(null);
         });
 
-        // numeric fields
+        // ---------- numeric fields (Layout tab) ----------
         function mkGrid(id, items) {
             const g = $(id); g.innerHTML = '';
             items.forEach(([key, label]) => { const d = document.createElement('div'); d.innerHTML = '<label>' + label + '</label><input type="number" step="any" id="f-' + key + '">'; g.appendChild(d); });
         }
+        mkGrid('g-base', [['bx', 'X m'], ['by', 'Y m'], ['bz', 'Z m'], ['byaw', 'Turn °']]);
         mkGrid('g-tool', [['tx', 'X mm'], ['ty', 'Y mm'], ['tz', 'Z mm'], ['rx', 'Rx °'], ['ry', 'Ry °'], ['rz', 'Rz °']]);
         mkGrid('g-jig', [['jx', 'X m'], ['jy', 'Y m'], ['jz', 'Z m'], ['jrx', 'Rx °'], ['jry', 'Ry °'], ['jrz', 'Rz °']]);
-        const FIELDS = ['tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'jx', 'jy', 'jz', 'jrx', 'jry', 'jrz'];
+        const FIELDS = ['bx', 'by', 'bz', 'byaw', 'tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'jx', 'jy', 'jz', 'jrx', 'jry', 'jrz'];
         function syncFields() {
             if (!$('pane-layout').classList.contains('active')) return;
-            const jr = new THREE.Euler().setFromQuaternion(jigMesh.quaternion, 'XYZ');
-            const v = { tx: data.toolOffsetX * 1000, ty: data.toolOffsetY * 1000, tz: data.toolOffsetZ * 1000, rx: data.toolRotX * R2D, ry: data.toolRotY * R2D, rz: data.toolRotZ * R2D, jx: data.jigX, jy: data.jigY, jz: data.jigZ, jrx: jr.x * R2D, jry: jr.y * R2D, jrz: jr.z * R2D };
-            FIELDS.forEach(k => { const el = $('f-' + k); if (el && document.activeElement !== el) el.value = (+v[k]).toFixed(k[0] === 'j' && k.length === 2 ? 3 : 1); });
+            const jr = new THREE.Euler().setFromQuaternion(jigMesh.quaternion, 'XYZ'), rp = activeR.root.position;
+            const v = { bx: rp.x, by: rp.y, bz: rp.z, byaw: activeR.root.rotation.z * R2D, tx: data.toolOffsetX * 1000, ty: data.toolOffsetY * 1000, tz: data.toolOffsetZ * 1000, rx: data.toolRotX * R2D, ry: data.toolRotY * R2D, rz: data.toolRotZ * R2D, jx: data.jigX, jy: data.jigY, jz: data.jigZ, jrx: jr.x * R2D, jry: jr.y * R2D, jrz: jr.z * R2D };
+            FIELDS.forEach(k => { const el = $('f-' + k); if (el && document.activeElement !== el) el.value = (+v[k]).toFixed(k.length === 2 && (k[0] === 'j' || k[0] === 'b') ? 3 : 1); });
         }
         setInterval(syncFields, 200);
         FIELDS.forEach(k => $('f-' + k).addEventListener('change', () => {
             const n = parseFloat($('f-' + k).value); if (isNaN(n)) return;
+            const rp = activeR.root.position;
+            if (k === 'bx') rp.x = n; if (k === 'by') rp.y = n; if (k === 'bz') rp.z = n; if (k === 'byaw') activeR.root.rotation.z = n * D2R;
             if (k === 'tx') data.toolOffsetX = n / 1000; if (k === 'ty') data.toolOffsetY = n / 1000; if (k === 'tz') data.toolOffsetZ = n / 1000;
             if (k === 'rx') data.toolRotX = n * D2R; if (k === 'ry') data.toolRotY = n * D2R; if (k === 'rz') data.toolRotZ = n * D2R;
             if (k === 'jx') data.jigX = n; if (k === 'jy') data.jigY = n; if (k === 'jz') data.jigZ = n;
@@ -1393,66 +1527,186 @@ def build_embedded_viewport(payload):
                 if (k === 'jrx') e.x = n * D2R; if (k === 'jry') e.y = n * D2R; if (k === 'jrz') e.z = n * D2R;
                 jigMesh.quaternion.setFromEuler(e);
             }
-            refreshSceneDisplay(false); saveLayout();
+            refreshSceneDisplay(false); markDirty();
         }));
-        $('btn-snap').addEventListener('click', () => { data.toolOffsetX = data.toolOffsetY = data.toolOffsetZ = 0; data.toolRotX = data.toolRotY = data.toolRotZ = 0; refreshSceneDisplay(false); saveLayout(); toast('Tool snapped to the flange'); });
+        $('btn-snap').addEventListener('click', () => { data.toolOffsetX = data.toolOffsetY = data.toolOffsetZ = 0; data.toolRotX = data.toolRotY = data.toolRotZ = 0; refreshSceneDisplay(false); markDirty(); toast('Tool snapped to the flange'); });
         function cadMesh() { return internalJigContent.children[0]; }
-        $('btn-cadx').addEventListener('click', () => { const m = cadMesh(); if (m) { m.rotation.x += Math.PI / 2; saveLayout(); } else toast('No jig loaded'); });
-        $('btn-cady').addEventListener('click', () => { const m = cadMesh(); if (m) { m.rotation.y += Math.PI / 2; saveLayout(); } else toast('No jig loaded'); });
+        $('btn-cadx').addEventListener('click', () => { const m = cadMesh(); if (m) { m.rotation.x += Math.PI / 2; markDirty(); } else toast('No jig loaded'); });
+        $('btn-cady').addEventListener('click', () => { const m = cadMesh(); if (m) { m.rotation.y += Math.PI / 2; markDirty(); } else toast('No jig loaded'); });
 
-        // remember layout per robot (browser localStorage; harmless if blocked)
-        const LKEY = 'olp.layout.' + data.profileName;
-        function saveLayout() {
-            try {
-                const m = cadMesh();
-                localStorage.setItem(LKEY, JSON.stringify({ to: [data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ], tr: [data.toolRotX, data.toolRotY, data.toolRotZ], jp: [data.jigX, data.jigY, data.jigZ], jq: jigMesh.quaternion.toArray(), cx: m ? m.rotation.x : null, cy: m ? m.rotation.y : null }));
-            } catch (e) { }
+        /* ======================= STATION SEQUENCE ======================= */
+        let SEQ = [];
+        const SR = { on: false, i: -1, tasks: [], t: 0, last: 0, skips: 0 };
+        function renderStationRobots() {
+            commitRobot(activeR);
+            const box = $('st-robots'); box.innerHTML = '';
+            stationRobots.forEach(R => {
+                const d = document.createElement('div'); d.className = 'rbadge' + (R === activeR ? ' act' : '');
+                d.innerHTML = '<b>' + R.label + '</b><span style="flex:1">' + R.profile.replace('_', ' ') + (R.hasTool ? ' · tool ✓' : ' · no tool') + '</span><span class="chip">' + R.traj.length + ' steps</span><button class="mini" data-act="' + R.idx + '">Select</button>';
+                box.appendChild(d);
+            });
         }
-        function loadLayout() {
-            try {
-                const s = localStorage.getItem(LKEY); if (!s) return; const d = JSON.parse(s);
-                [data.toolOffsetX, data.toolOffsetY, data.toolOffsetZ] = d.to; [data.toolRotX, data.toolRotY, data.toolRotZ] = d.tr;
-                [data.jigX, data.jigY, data.jigZ] = d.jp; jigMesh.quaternion.fromArray(d.jq);
-                const m = cadMesh(); if (m && d.cx !== null) { m.rotation.x = d.cx; m.rotation.y = d.cy; }
-            } catch (e) { }
+        $('st-robots').addEventListener('click', (e) => { const a = e.target.getAttribute('data-act'); if (a !== null) { activate(stationRobots[+a]); renderStationRobots(); } });
+        function robotChecks(i, st) {
+            return stationRobots.map(R => '<label class="rchip"><input type="checkbox" data-seq="' + i + '" data-r="' + R.idx + '"' + (st.r[R.idx] ? ' checked' : '') + '> ' + R.label + '</label>').join('');
         }
-        $('btn-lay-reset').addEventListener('click', () => {
-            try { localStorage.removeItem(LKEY); } catch (e) { }
-            data.toolOffsetX = data.toolOffsetY = data.toolOffsetZ = 0; data.toolRotX = data.toolRotY = data.toolRotZ = 0;
-            data.jigX = 1.6; data.jigY = 0; data.jigZ = 0.55; jigMesh.quaternion.set(0, 0, 0, 1);
-            const m = cadMesh(); if (m) { m.rotation.x = data.rotX; m.rotation.y = data.rotY; }
-            refreshSceneDisplay(false); toast('Layout reset');
+        function renderSeq() {
+            const tb = $('seq-body'); tb.innerHTML = '';
+            SEQ.forEach((st, i) => {
+                const tr = document.createElement('tr'); tr.dataset.i = i; if (SR.on && SR.i === i) tr.className = 'seqcur';
+                let body = '';
+                if (st.k === 'run') body = 'Run ' + robotChecks(i, st);
+                else if (st.k === 'home') body = 'Home ' + robotChecks(i, st);
+                else if (st.k === 'e1') body = 'Turn E1 to <input type="number" step="5" style="width:64px" data-seq="' + i + '" data-p="deg" value="' + st.deg + '"> °';
+                else body = 'Wait <input type="number" step="0.5" min="0" style="width:64px" data-seq="' + i + '" data-p="s" value="' + st.s + '"> s';
+                tr.innerHTML = '<td>' + (i + 1) + '</td><td>' + body + '</td><td style="white-space:nowrap"><button class="mini" data-up="' + i + '">↑</button> <button class="mini" data-dn="' + i + '">↓</button> <button class="mini" data-rm="' + i + '">✕</button></td>';
+                tb.appendChild(tr);
+            });
+            $('seq-empty').style.display = SEQ.length ? 'none' : 'block';
+        }
+        $('seq-body').addEventListener('click', (e) => {
+            if (SR.on) return;
+            const up = e.target.getAttribute('data-up'), dn = e.target.getAttribute('data-dn'), rm = e.target.getAttribute('data-rm');
+            if (up !== null && +up > 0) { const i = +up; [SEQ[i - 1], SEQ[i]] = [SEQ[i], SEQ[i - 1]]; }
+            else if (dn !== null && +dn < SEQ.length - 1) { const i = +dn; [SEQ[i + 1], SEQ[i]] = [SEQ[i], SEQ[i + 1]]; }
+            else if (rm !== null) SEQ.splice(+rm, 1); else return;
+            renderSeq(); markDirty();
         });
-        loadLayout();
+        $('seq-body').addEventListener('change', (e) => {
+            const i = e.target.getAttribute('data-seq'); if (i === null) return; const st = SEQ[+i];
+            if (e.target.type === 'checkbox') st.r[+e.target.getAttribute('data-r')] = e.target.checked ? 1 : 0;
+            else if (e.target.getAttribute('data-p') === 'deg') st.deg = parseFloat(e.target.value) || 0; else st.s = Math.max(0, parseFloat(e.target.value) || 0);
+            markDirty();
+        });
+        $('seq-add').addEventListener('click', () => {
+            const k = $('seq-kind').value, r = stationRobots.map(R => R === activeR ? 1 : 0);
+            SEQ.push(k === 'run' || k === 'home' ? { k: k, r: r } : k === 'e1' ? { k: k, deg: 90 } : { k: k, s: 1 });
+            renderSeq(); markDirty();
+        });
+        $('seq-auto').addEventListener('click', () => {
+            commitRobot(activeR); SEQ = [];
+            stationRobots.forEach(R => { if (R.traj.length >= 2) SEQ.push({ k: 'run', r: stationRobots.map(Q => Q === R ? 1 : 0) }); });
+            if (!SEQ.length) toast('Record at least 2 steps for a robot first.'); else toast('Sequence built: robots run one after another.');
+            renderSeq(); markDirty();
+        });
+        $('seq-clear').addEventListener('click', () => { if (SR.on) return; SEQ = []; renderSeq(); markDirty(); });
 
-        /* ---- easier tool matching: 90-degree snap, +90 buttons in the flange frame, round-off ---- */
-        let snapOn = true;
-        function applySnap() {
-            const on = selPart === 'tool' && snapOn;
-            partGizmo.setRotationSnap(on ? Math.PI / 2 : null); partGizmo.setTranslationSnap(on ? 0.01 : null);
-            $('pt-snap').innerText = 'Snap 90°: ' + (snapOn ? 'ON' : 'OFF'); $('pt-snap').classList.toggle('active', snapOn);
-            $('tool-only').style.display = selPart === 'tool' ? 'flex' : 'none';
+        function applyPose(R, transforms, e1) {
+            const ex = (e1 === undefined) ? e1Global : e1;
+            withRobot(R, () => updateSceneTransforms(transforms, R.tool.ox, R.tool.oy, R.tool.oz, R.tool.rx, R.tool.ry, R.tool.rz, data.jigX, data.jigY, data.jigZ, ex));
         }
-        $('pt-snap').addEventListener('click', () => { snapOn = !snapOn; applySnap(); });
-        const _selectPart = selectPart;
-        selectPart = function (n) { _selectPart(n); applySnap(); };
-        function toolLocalQuat() { return new THREE.Quaternion().setFromEuler(new THREE.Euler(data.toolRotX, data.toolRotY, data.toolRotZ, 'XYZ')); }
-        function setToolLocalQuat(q) { const e = new THREE.Euler().setFromQuaternion(q, 'XYZ'); data.toolRotX = e.x; data.toolRotY = e.y; data.toolRotZ = e.z; refreshSceneDisplay(false); saveLayout(); }
-        document.querySelectorAll('.rot90').forEach(b => b.addEventListener('click', () => {
-            const ax = b.dataset.ax === 'x' ? new THREE.Vector3(1, 0, 0) : b.dataset.ax === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
-            setToolLocalQuat(new THREE.Quaternion().setFromAxisAngle(ax, Math.PI / 2).multiply(toolLocalQuat()));   // turned about the flange (A6) axes
-        }));
-        function snapQuat90(q) {   // nearest of the 24 axis-aligned orientations
-            const m = new THREE.Matrix4().makeRotationFromQuaternion(q), e = m.elements;
-            const col = (i) => new THREE.Vector3(e[i * 4], e[i * 4 + 1], e[i * 4 + 2]);
-            const dom = (v, skip) => { let best = -1, bi = 0; ['x', 'y', 'z'].forEach((k, i) => { if (skip.includes(i)) return; if (Math.abs(v[k]) > best) { best = Math.abs(v[k]); bi = i; } }); const o = new THREE.Vector3(); o.setComponent(bi, Math.sign(v.getComponent(bi)) || 1); return [o, bi]; };
-            const [a0, i0] = dom(col(0), []); const [a1] = dom(col(1), [i0]); const a2 = new THREE.Vector3().crossVectors(a0, a1);
-            return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(a0, a1, a2));
+        function setE1(v) { e1Global = v; internalJigContent.rotation.z = v; }
+        function lerpAngles(a, b, f) { return a.map((v, i) => v + (b[i] - v) * f); }
+        function seqNext() {
+            SR.i++;
+            if (SR.i >= SEQ.length) { if ($('chk-sloop').checked && SR.skips <= SEQ.length) { SR.i = 0; } else { seqStop(); toast('Station sequence finished'); return; } }
+            const s = SEQ[SR.i]; SR.tasks = []; SR.t = 0;
+            if (s.k === 'run') stationRobots.forEach(R => { if (s.r[R.idx] && R.traj.length >= 2) { const es = R.traj.map(p => p.angles[7]); SR.tasks.push({ k: 'run', R: R, i: 0, f: 0, e1: Math.max(...es) - Math.min(...es) > 0.01 }); } });
+            else if (s.k === 'home') stationRobots.forEach(R => { if (s.r[R.idx]) SR.tasks.push({ k: 'home', R: R, from: [...R.angles], f: 0 }); });
+            else if (s.k === 'e1') SR.tasks.push({ k: 'e1', from: e1Global, to: s.deg * D2R, f: 0 });
+            if (s.k !== 'wait' && !SR.tasks.length) { SR.skips++; seqNext(); return; }
+            SR.skips = 0; renderSeq();
+            $('seq-status').innerText = 'Step ' + (SR.i + 1) + ' of ' + SEQ.length;
         }
-        function roundTool(msg) { setToolLocalQuat(snapQuat90(toolLocalQuat())); if (msg) toast('Tool rotation rounded to the nearest 90°'); }
-        $('pt-round').addEventListener('click', () => roundTool(true));
-        partGizmo.addEventListener('dragging-changed', (e) => { if (!e.value && selPart === 'tool' && snapOn) roundTool(false); });   // free-turn ring: land on a 90° orientation when released
-        applySnap();
+        function seqStart() {
+            if (runSimulation) return;
+            if (!SEQ.length) { toast('Add at least one step, or press "Auto".'); return; }
+            commitRobot(activeR); stationRobots.forEach(R => { R.angles[7] = e1Global; });
+            SR.on = true; SR.i = -1; SR.skips = 0; SR.last = performance.now(); selectPart(null); seqNext();
+        }
+        function seqStop() {
+            if (!SR.on) return;
+            SR.on = false;
+            SR.tasks.forEach(T => {      // keep the pose where it stopped
+                if (T.done) return;
+                if (T.k === 'run') { const a = T.R.traj[T.i], b = T.R.traj[Math.min(T.i + 1, T.R.traj.length - 1)]; T.R.angles = lerpAngles(a.angles, b.angles, T.f); }
+                else if (T.k === 'home') T.R.angles = lerpAngles(T.from, new Array(8).fill(0), T.f);
+            });
+            stationRobots.forEach(R => { R.angles[7] = e1Global; });
+            const act = activeR;
+            stationRobots.forEach(R => { if (R !== act) applyPose(R, withRobot(R, () => computeForwardKinematics(R.angles))); });
+            bindRobot(act); localJointAngles = act.angles; embeddedTrajectory = act.traj; refreshSceneDisplay(true);
+            $('seq-status').innerText = 'Idle'; renderSeq(); renderStationRobots(); markDirty();
+        }
+        function seqTick() {
+            if (!SR.on) return;
+            const now = performance.now(), dt = Math.min(0.1, (now - SR.last) / 1000); SR.last = now;
+            const f60 = dt * 60, sp = parseFloat($('sld-speed').value) / 100, s = SEQ[SR.i];
+            if (s.k === 'wait') { SR.t += dt; if (SR.t >= s.s) seqNext(); return; }
+            SR.tasks.forEach(T => {
+                if (T.done) return;
+                if (T.k === 'run') {
+                    const tr = T.R.traj; T.f += sp * 0.04 * f60;
+                    if (T.f >= 1) { T.f = 0; T.i++; if (T.i >= tr.length - 1) { T.done = true; const last = tr[tr.length - 1]; T.R.angles = [...last.angles]; if (T.e1) setE1(last.angles[7]); T.R.angles[7] = e1Global; applyPose(T.R, last.transforms); return; } }
+                    const a = tr[T.i], b = tr[T.i + 1], bl = [];
+                    for (let i = 0; i < 7; i++) {
+                        bl.push({ pos: new THREE.Vector3().lerpVectors(new THREE.Vector3().fromArray(a.transforms[i].pos), new THREE.Vector3().fromArray(b.transforms[i].pos), T.f).toArray(),
+                                  quat: new THREE.Quaternion().fromArray(a.transforms[i].quat).slerp(new THREE.Quaternion().fromArray(b.transforms[i].quat), T.f).toArray() });
+                    }
+                    if (T.e1) setE1((1 - T.f) * a.angles[7] + T.f * b.angles[7]);
+                    applyPose(T.R, bl);
+                } else if (T.k === 'home') {
+                    T.f += sp * 0.02 * f60; const f = Math.min(1, T.f), z = new Array(8).fill(0); z[7] = e1Global;
+                    const ang = lerpAngles(T.from, z, f); ang[7] = e1Global;
+                    applyPose(T.R, withRobot(T.R, () => computeForwardKinematics(ang)));
+                    if (f >= 1) { T.done = true; T.R.angles = ang; }
+                } else if (T.k === 'e1') {
+                    T.f += sp * 0.02 * f60; const f = Math.min(1, T.f); setE1(T.from + (T.to - T.from) * f); if (f >= 1) T.done = true;
+                }
+            });
+            if (SR.tasks.every(T => T.done)) seqNext();
+        }
+        $('btn-seq-run').addEventListener('click', () => { if (SR.on) seqStop(); else seqStart(); });
+        (function sloop() { requestAnimationFrame(sloop); seqTick(); })();
+
+        /* ======================= SAVE / LOAD (browser localStorage, per station set-up) ======================= */
+        const SKEY = 'olp.station.v3';
+        const SIG = data.robots.map(r => r.profile + '|' + (r.toolKey ? r.toolName : '')).join(',');
+        function saveStation() {
+            try {
+                commitRobot(activeR); const m = cadMesh();
+                localStorage.setItem(SKEY, JSON.stringify({
+                    sig: SIG, e1: e1Global, seq: SEQ,
+                    robots: stationRobots.map(R => ({ base: { x: R.root.position.x, y: R.root.position.y, z: R.root.position.z, yaw: R.root.rotation.z }, tool: R.tool, angles: R.angles, traj: R.traj })),
+                    jig: { p: [data.jigX, data.jigY, data.jigZ], q: jigMesh.quaternion.toArray(), cx: m ? m.rotation.x : null, cy: m ? m.rotation.y : null }
+                }));
+            } catch (e) { }
+        }
+        function loadStation() {
+            try {
+                const s = localStorage.getItem(SKEY); if (!s) return; const d = JSON.parse(s);
+                if (d.jig) { [data.jigX, data.jigY, data.jigZ] = d.jig.p; jigMesh.quaternion.fromArray(d.jig.q); const m = cadMesh(); if (m && d.jig.cx !== null) { m.rotation.x = d.jig.cx; m.rotation.y = d.jig.cy; } }
+                if (d.sig !== SIG) return;                       // robots or tools changed in Setup: keep only the jig layout
+                e1Global = d.e1 || 0; SEQ = d.seq || [];
+                d.robots.forEach((rs, i) => { const R = stationRobots[i]; if (!R) return; R.root.position.set(rs.base.x, rs.base.y, rs.base.z); R.root.rotation.z = rs.base.yaw; R.tool = rs.tool; R.angles = rs.angles; R.traj = rs.traj; });
+                bindRobot(activeR);
+            } catch (e) { }
+        }
+        setInterval(() => { if (dirty) { dirty = false; saveStation(); } }, 1500);
+        window.addEventListener('pagehide', saveStation);
+        $('btn-lay-reset').addEventListener('click', () => {
+            try { localStorage.removeItem(SKEY); } catch (e) { }
+            stationRobots.forEach((R, i) => { const b = data.robots[i].base; R.root.position.set(b.x, b.y, b.z || 0); R.root.rotation.z = b.yaw || 0; R.tool = { ox: 0, oy: 0, oz: 0, rx: 0, ry: 0, rz: 0 }; });
+            bindRobot(activeR);
+            data.jigX = data.jigX0; data.jigY = data.jigY0; data.jigZ = data.jigZ0; jigMesh.quaternion.set(0, 0, 0, 1);
+            const m = cadMesh(); if (m) { m.rotation.x = data.rotX; m.rotation.y = data.rotY; }
+            refreshSceneDisplay(false); toast('Layout reset (robot programs kept)');
+        });
+        data.jigX0 = data.jigX; data.jigY0 = data.jigY; data.jigZ0 = data.jigZ;
+
+        // keep the 3D canvas sized to its panel
+        if (window.ResizeObserver) new ResizeObserver(() => {
+            if (!container.clientWidth || !container.clientHeight) return;
+            camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }).observe(container);
+
+        // ---------- init ----------
+        buildTree(); setGizmoMode('translate'); applySnap();
+        loadStation(); buildJogRows(); updateChips(); updateTreeClasses(); renderSeq();
+        setView('iso');
+        setInterval(updateReadouts, 120);
+        setInterval(updateRunUI, 150);
 
         refreshSceneDisplay(true); updateUIElements(); animate();
     </script>
@@ -1462,43 +1716,46 @@ def build_embedded_viewport(payload):
     html_source = html_source.replace("__PAYLOAD_STREAM__", json_stream)
     components.html(html_source, height=820, scrolling=False)
 
-# --- 9. DYNAMIC HARDWARE FILE BINDING LAYER ---
+# --- 9. DYNAMIC HARDWARE FILE BINDING LAYER (several robots share meshes of the same model) ---
 path_jig = os.path.join(TEMP_DIR, "jig.stl")
 
-link_b64s = []
-for i in range(7):
-    mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
-    target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", selected_profile, mesh_filename)
-    if not os.path.exists(target_mesh_path):
-        target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
-    link_b64s.append(get_file_base64_cached(target_mesh_path))
-
-tooling_b64 = ""
-if selected_tool_path and os.path.exists(selected_tool_path):
-    tooling_b64 = get_file_base64_cached(selected_tool_path, get_file_hash(selected_tool_path))
+profiles_payload, tools_payload, robots_payload = {}, {}, []
+for k, cfg in enumerate(robot_cfgs):
+    prof = cfg["profile"]
+    if prof not in profiles_payload:
+        pcfg = ROBOT_REGISTRY.get(prof, ROBOT_REGISTRY["ABB_6700"])
+        link_b64s = []
+        for i in range(7):
+            mesh_filename = f"link_{i}.stl" if i > 0 else "base_link.stl"
+            target_mesh_path = os.path.join(BASE_DIR, "assets", "robots", prof, mesh_filename)
+            if not os.path.exists(target_mesh_path):
+                target_mesh_path = os.path.join(BASE_DIR, "assets", "meshes", mesh_filename)
+            link_b64s.append(get_file_base64_cached(target_mesh_path))
+        profiles_payload[prof] = {
+            "linkGeometries": link_b64s,
+            "fallbackHeights": pcfg["fallback_heights"],
+            "dhConfig": pcfg["links"],
+            "jointLimits": pcfg["limits"],
+        }
+    tool_key, tool_name = "", ""
+    tp = cfg["tool_path"]
+    if tp and os.path.exists(tp):
+        tool_key, tool_name = tp, os.path.basename(tp)
+        if tool_key not in tools_payload:
+            tools_payload[tool_key] = get_file_base64_cached(tp, get_file_hash(tp))
+    bx, by, bz, byaw = DEFAULT_BASES[k]
+    robots_payload.append({"profile": prof, "toolKey": tool_key, "toolName": tool_name,
+                           "base": {"x": bx, "y": by, "z": bz, "yaw": float(byaw)}})
 
 scene_payload = {
-    "profileName": selected_profile,
-    "trajectory": st.session_state.program,
-    "initialAngles": st.session_state.j_angles,
-    "linkGeometries": link_b64s,
-    "fallbackHeights": active_cfg["fallback_heights"],
-    "dhConfig": active_cfg["links"],
-    "jointLimits": active_cfg["limits"],
-    "gunData": tooling_b64,
+    "profiles": profiles_payload,
+    "tools": tools_payload,
+    "robots": robots_payload,
     "jigData": get_file_base64_cached(path_jig, get_file_hash(path_jig)),
-    "toolOffsetX": t_off_x,
-    "toolOffsetY": t_off_y,
-    "toolOffsetZ": t_off_z,
-    "toolRotX": float(t_rot_x) * (np.pi / 180.0),
-    "toolRotY": float(t_rot_y) * (np.pi / 180.0),
-    "toolRotZ": float(t_rot_z) * (np.pi / 180.0),
-    "jigX": jx_pos,
-    "jigY": jy_pos,
-    "jigZ": jz_pos,
+    "jigX": jx_pos, "jigY": jy_pos, "jigZ": jz_pos,
     "rotX": float(j_rot_x) * (np.pi / 180.0),
     "rotY": float(j_rot_y) * (np.pi / 180.0),
-    "jigScale": js_scale
+    "jigScale": js_scale,
 }
 
 build_embedded_viewport(scene_payload)
